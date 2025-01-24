@@ -1,10 +1,21 @@
-#include <stdio.h> 
-#include <strings.h> 
-#include <sys/types.h> 
-#include <arpa/inet.h> 
-#include <sys/socket.h> 
-#include <netinet/in.h> 
-#include <unistd.h> 
+/*
+===================================== 
+Assignment 2 Submission - wordclient.c
+Name: Harshit Jain
+Roll number: 22CS10030
+Link of the pcap file: https://drive.google.com/file/d/1czO9qor2WBC5euc79yZ8aToR0SkmtKCR/view?usp=sharing
+===================================== 
+*/
+
+#include <stdio.h>
+#include <strings.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <errno.h>
 #include <stdlib.h> 
 #include <string.h>
 
@@ -36,13 +47,27 @@ int main(int argc, const char* argv[]){
     
     // UDP Socket
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if(sockfd == -1){
+    if(sockfd < 0){
         perror("client: socket");
         exit(1);
     }
 
+    // Set timeout (of 5 seconds) for recvfrom
+    struct timeval tv;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    if(setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO,&tv, sizeof(tv)) < 0){
+        perror("client: setsockopt");
+        exit(1);
+    }
+
     // Send filename to server
-    sendto(sockfd, argv[1], MAXLINE, 0, (struct sockaddr*)&servaddr, sizeof(servaddr));
+    if(sendto(sockfd, argv[1], strlen(argv[1]), 0, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0){
+        close(sockfd);
+        perror("client: sendto");
+        exit(1);
+    }
+
     int ct = 0;
     FILE* fp;
 
@@ -51,7 +76,7 @@ int main(int argc, const char* argv[]){
 
         // Receive message from server
         int numbytes = recvfrom(sockfd, buffer, sizeof(buffer), 0, NULL, NULL); 
-        if(numbytes==-1){
+        if(numbytes < 0){
             close(sockfd);
             perror("client: recvfrom");
             exit(1);
@@ -71,6 +96,11 @@ int main(int argc, const char* argv[]){
             fp = fopen(fname, "w");
         }
 
+        if(fp == NULL){
+            perror("client: fopen");
+            exit(1);
+        }
+        
         // Write the response to the file
         fprintf(fp, "%s\n", buffer);
         
@@ -82,7 +112,7 @@ int main(int argc, const char* argv[]){
 
         // Send WORD request to server
         sprintf(req, "WORD %d", ct); 
-        if(sendto(sockfd, req, strlen(req), 0, (struct sockaddr*)&servaddr, sizeof(servaddr)) == -1){
+        if(sendto(sockfd, req, strlen(req), 0, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0){
             close(sockfd);
             perror("client: sendto");
             exit(1);

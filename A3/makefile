@@ -3,4 +3,4 @@ run:
 	gcc -o client retrieveencfileclient.c
 
 clean:
-	rm -f server client 127.0.0.1*
+	rm -f server client 127.0.0.1* *.enc

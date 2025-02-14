@@ -14,16 +14,21 @@
 #include <sys/wait.h>
 #include <sys/sem.h>
 #include <errno.h>
+#include <pthread.h>
 
 typedef int ksockfd_t;
 typedef int usockfd_t;
 
-#define MSGSIZE 512 // Bytes
-#define SEQSIZE 8   // Bits
-#define BUFFSIZE 10 // Messages
+#define MSGSIZE 512                                  // Bytes
+#define MSGTYPE 4                                    // BytesInHeader
+#define HEADERSIZE (MSGTYPE + 2 * sizeof(u_int16_t)) // Bytes
+#define SEQSIZE 8                                    // Bits
+#define MAXSEQ (1 << SEQSIZE) - 1                    // Sequence Space
+#define BUFFSIZE 10                                  // Messages
 #define QUEUEMAXLEN BUFFSIZE
-#define T 5         // Timeout Seconds
-#define N 10        // Number of active sockets
+#define WINDOWSIZE BUFFSIZE
+#define T 5  // Timeout Seconds
+#define N 10 // Number of active sockets
 
 #define SOCK_KTP SOCK_DGRAM // Socket type
 
@@ -41,7 +46,9 @@ typedef struct window
 {
     int size;
     int base;
-    int msg_seq[BUFFSIZE];
+    int last_ack;
+    u_int16_t msg_seq[WINDOWSIZE];
+    bool received[WINDOWSIZE];
 } window;
 
 typedef struct queue
@@ -59,9 +66,10 @@ typedef struct k_sockinfo
     usockfd_t sockfd;             // mapping from the KTP socket to the corresponding UDP socket
     struct sockaddr_in dest_addr; // IP & Port address of the other end of the KTP socket
     char *send_buff[BUFFSIZE];    // Send buffer for the KTP socket
-    queue recv_buff;              // Receive buffer for the KTP socket
-    window swnd;                  // Send window for the KTP socket
-    window rwnd;                  // Receive window for the KTP socket
+    char *recv_buff[BUFFSIZE];    // Receive buffer for the KTP socket
+    window swnd;                  // Send window for the KTP socket, that contains the seq no's of the messages sent but not yet acknowledged
+    window rwnd;                  // Receive window for the KTP socket, indicating the seq no's expected by the receiver
+    bool nospace;                 // whether the KTP socket has no space in the recv buffer
 } k_sockinfo;
 
 union semun
@@ -118,10 +126,5 @@ int k_semget();
 void wait_sem(int semid, ksockfd_t i);
 void signal_sem(int semid, ksockfd_t i);
 
-// Receiver Queue
-queue init_queue();
-bool is_empty(queue* Q);
-bool is_full(queue* Q);
-char* q_front(queue* Q);
-int enqueue(queue* Q, const char* msg);
-int dequeue(queue* Q, char* buf);
+// Window
+window init_window();

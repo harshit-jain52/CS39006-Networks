@@ -1,10 +1,54 @@
 #include "ksocket.h"
+#define SELECT_TIMEOUT 100000 // Timeout (in usec) for select()
 
 /*
-Initializes two threads R and S, and a shared memory SM.
-Thread R handles all messages received from the UDP socket, and thread S handles the timeouts and retransmissions.
-Also starts a garbage collector process for cleanup.
+Message Formats
+
+* Data Message
+    * Header: 4 + 2*sizeof(u_int16_t) = 8 bytes
+        * "DATA" (4 bytes)
+        * SEQ (2 bytes)
+    * Message: 512 bytes
+
+* ACK Message
+    * Header: 4 + 2*sizeof(u_int16_t) = 8 bytes
+        * "ACK\0" (4 bytes)
+        * SEQ (2 bytes)
+        * RWND (2 bytes)
+    * Message: 0 bytes
 */
+
+void strip_msg(char buf[], char *type, u_int16_t *seq, u_int16_t *rwnd, char *msg)
+{
+    for (int i = 0; i < MSGTYPE; i++)
+        type[i] = buf[i];
+
+    type[MSGTYPE] = '\0';
+
+    *seq = ntohs(*((u_int16_t *)(buf + MSGTYPE)));
+    *rwnd = ntohs(*((u_int16_t *)(buf + MSGTYPE + sizeof(u_int16_t))));
+
+    for (int i = HEADERSIZE; i < MSGSIZE + HEADERSIZE; i++)
+        msg[i - HEADERSIZE] = buf[i];
+}
+
+void pad_string(char *str, int len)
+{
+    for (int i = strlen(str); i < len; i++)
+        str[i] = '\0';
+}
+
+ssize_t send_ack(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, u_int16_t rwnd)
+{
+    char buff[HEADERSIZE + MSGSIZE];
+    char type[MSGTYPE] = "ACK\0";
+    u_int16_t nseq = htons(seq), nrwnd = htons(rwnd);
+    memcpy(buff, type, MSGTYPE);
+    memcpy(buff + MSGTYPE, &nseq, sizeof(u_int16_t));
+    memcpy(buff + MSGTYPE + sizeof(u_int16_t), &nrwnd, sizeof(u_int16_t));
+    pad_string(buff, HEADERSIZE + MSGSIZE);
+    return sendto(sockfd, buff, HEADERSIZE + MSGSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+}
 
 void initk_shm()
 {
@@ -26,10 +70,6 @@ void initk_shm()
     for (int i = 0; i < N; i++)
     {
         SM[i].is_free = true;
-        for (int j = 0; j < BUFFSIZE; j++)
-            SM[i].send_buff[j] = NULL;
-        SM[i].recv_buff = init_queue();
-        bzero(&SM[i].dest_addr, sizeof(SM[i].dest_addr));
     }
 
     printf("Shared memory initialized with ID: %d\n", shmid);
@@ -62,8 +102,212 @@ void initk_sem()
     }
 }
 
+/*
+Waits for a message to come in a recvfrom() call from any of the UDP sockets (keep on checking whether there is any incoming message on any of the UDP sockets,
+on timeout check whether a new KTP socket has been created and include it in the read/write set accordingly).
+When it receives a message,
+* if it is a data message, it stores it in the receiver-side message buffer for the corresponding KTP socket, and sends an ACK message to the sender.
+In addition, it also sets a flag "nospace" if the available space at the receive buffer is zero.
+On a timeout over select() it additionally checks whether the flag "nospace" was set but now there is space available in the receive buffer.
+In that case, it sends a duplicate ACK message with the last acknowledged sequence number but with the updated rwnd size, and resets the flag.
+* if it is an ACK message in response to a previously sent message, it updates the swnd and removes the message from the sender-side message buffer for the corresponding KTP socket.
+* if it is a duplicate ACK message, it just updates the swnd size.
+*/
+void *threadR()
+{
+    fd_set master, rfds;
+    usockfd_t maxfd = 0;
+    struct timeval tv;
+
+    FD_ZERO(&master);
+
+    int shmid = k_shmget();
+    int semid = k_semget();
+    k_sockinfo *SM = k_shmat(shmid);
+
+    char buff[MSGSIZE + HEADERSIZE];
+
+    for (;;)
+    {
+        rfds = master;
+        tv.tv_sec = 0;
+        tv.tv_usec = SELECT_TIMEOUT;
+
+        select(maxfd + 1, &rfds, NULL, NULL, &tv);
+        int recvsocket = -1;
+        ssize_t numbytes = -1;
+        struct sockaddr_in sender_addr;
+        socklen_t addr_len = sizeof(sender_addr);
+        for (int i = 0; i < N; i++)
+        {
+            wait_sem(semid, i);
+            if (!SM[i].is_free && FD_ISSET(SM[i].sockfd, &rfds))
+            {
+                recvsocket = SM[i].sockfd;
+                numbytes = recvfrom(SM[i].sockfd, buff, MSGSIZE + HEADERSIZE, 0, (struct sockaddr *)&sender_addr, &addr_len);
+            }
+            signal_sem(semid, i);
+        }
+
+        if (recvsocket != -1)
+        {
+            if (numbytes < 0)
+            {
+                perror("recvfrom");
+            }
+            else if (numbytes == 0)
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    wait_sem(semid, i);
+                    if (!SM[i].is_free && SM[i].sockfd == recvsocket)
+                    {
+                        printf("Server: Connection closed by client\n");
+                        close(SM[i].sockfd);
+                        SM[i].is_free = true;
+                        FD_CLR(SM[i].sockfd, &master);
+                    }
+                    signal_sem(semid, i);
+                }
+            }
+            else
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    wait_sem(semid, i);
+                    if (!SM[i].is_free && SM[i].sockfd == recvsocket && SM[i].dest_addr.sin_addr.s_addr == sender_addr.sin_addr.s_addr && SM[i].dest_addr.sin_port == sender_addr.sin_port)
+                    {
+                        char type[MSGTYPE + 1], msg[MSGSIZE];
+                        u_int16_t seq, rwnd;
+                        strip_msg(buff, type, &seq, &rwnd, msg);
+
+                        if (!strcmp(type, "DATA")) // Data Message
+                        {
+                            /*
+                            * in-order message
+                                the message is written to the buffer after removing the KTP header, the free space in the buffer is computed and the rwnd size is updated accordingly.
+                                The receiver then sends an ACK message to the sender which piggybacks the updated rwnd size, and the sequence number of the last in-order message received within rwnd.
+                            * out-of-order message
+                                keeps the message in the buffer (if the message sequence number is within rwnd) but does not send any ACK message.
+                            * duplicate messages
+                                identifying them with the sequence number and then dropping them if already received once
+                            */
+
+                            for (int j = SM[i].rwnd.base, ctr = 0; ctr < SM[i].rwnd.size; j = (j + 1) % WINDOWSIZE, ctr++)
+                            {
+                                if (SM[i].rwnd.msg_seq[j] == seq)
+                                {
+                                    if (!SM[i].rwnd.received[j])
+                                    {
+                                        SM[i].rwnd.received[j] = true;
+                                        SM[i].recv_buff[j] = (char *)malloc(MSGSIZE);
+                                        memcpy(SM[i].recv_buff[j], msg, MSGSIZE);
+
+                                        int new_last_ack = -1;
+                                        for (int k = SM[i].rwnd.base, ct = 0; ct < SM[i].rwnd.size; k = (k + 1) % WINDOWSIZE, ct++)
+                                        {
+                                            if (!SM[i].rwnd.received[k])
+                                                break;
+                                            new_last_ack = k;
+                                        }
+                                        if (new_last_ack != -1)
+                                        {
+                                            SM[i].rwnd.last_ack = SM[i].rwnd.msg_seq[new_last_ack];
+                                            SM[i].rwnd.size -= new_last_ack - SM[i].rwnd.base + 1;
+                                            int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
+                                            if (n < 0)
+                                            {
+                                                perror("send_ack");
+                                            }
+                                        }
+                                    }
+                                    else
+                                    {
+                                        printf("Duplicate message received: %u\n", seq);
+                                        int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
+                                        if (n < 0)
+                                        {
+                                            perror("send_ack");
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        else if (!strcmp(type, "ACK")) // ACK Message
+                        {
+                            /*
+                            * receives an ACK message
+                            updates the swnd accordingly: slides the window till the last message acknowledged and increases/decreases
+                            the window size based on the piggybacked rwnd size in the ACK message
+                            */
+
+                            for (int j = SM[i].swnd.base, ctr = 0; ctr < SM[i].swnd.size; j = (j + 1) % WINDOWSIZE, ctr++)
+                            {
+                                if (SM[i].swnd.msg_seq[j] == seq)
+                                {
+                                    SM[i].swnd.base = (j + 1) % WINDOWSIZE;
+                                    SM[i].swnd.size -= ctr + 1;
+                                    SM[i].swnd.last_ack = seq;
+                                    break;
+                                }
+                            }
+                            if (rwnd > SM[i].swnd.size)
+                            {
+                                for (int j = 0; j < rwnd; j++)
+                                {
+                                    SM[i].swnd.msg_seq[(SM[i].swnd.base + j) % WINDOWSIZE] = (SM[i].swnd.last_ack + j + 1) % MAXSEQ;
+                                }
+                                SM[i].swnd.size = rwnd;
+                            }
+                        }
+                        else
+                        {
+                            printf("Invalid message type: %s\n", type);
+                        }
+                    }
+                    signal_sem(semid, i);
+                }
+            }
+        }
+        else
+        {
+            for (int i = 0; i < N; i++)
+            {
+                wait_sem(semid, i);
+                if (!SM[i].is_free)
+                {
+                    FD_SET(SM[i].sockfd, &master);
+                }
+                signal_sem(semid, i);
+            }
+        }
+    }
+}
+
+/*
+Sleeps for some time (T/2), and wakes up periodically.
+On waking up, it first checks whether the message timeout period (T) is over for the messages sent over any of the active KTP sockets.
+If yes, it retransmits all the messages within the current swnd for that KTP socket.
+It then checks the current swnd for each of the KTP sockets and determines whether there is a pending message from the sender-side message buffer
+that can be sent. If so, it sends that message through the UDP sendto() call for the corresponding UDP socket and updates the send timestamp.
+*/
+void *threadS()
+{
+    while (1)
+    {
+        sleep(T / 2);
+    }
+}
+
 int main()
 {
     initk_shm();
     initk_sem();
+
+    pthread_t rid, sid;
+    pthread_create(&rid, NULL, threadR, NULL);
+    pthread_create(&sid, NULL, threadS, NULL);
+
+    pthread_exit(NULL);
 }

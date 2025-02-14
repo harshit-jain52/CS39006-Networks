@@ -33,6 +33,16 @@ ksockfd_t k_socket(int domain, int type, int protocol)
             SM[i].sockfd = sockfd;
             SM[i].pid = getpid();
             SM[i].is_free = false;
+            bzero(&SM[i].dest_addr, sizeof(SM[i].dest_addr));
+            for (int j = 0; j < BUFFSIZE; j++)
+            {
+
+                SM[i].send_buff[j] = NULL;
+                SM[i].recv_buff[j] = NULL;
+            }
+            SM[i].swnd = init_window();
+            SM[i].rwnd = init_window();
+            SM[i].nospace = false;
             signal_sem(semid, i);
             return i;
         }
@@ -138,7 +148,10 @@ ssize_t k_recvfrom(ksockfd_t sockfd, void *buf, size_t len, int flags, struct so
     }
     wait_sem(semid, sockfd);
 
-    ssize_t numbytes = dequeue(&SM[sockfd].recv_buff, buf);
+    int numbytes;
+
+    // TO DO
+
     signal_sem(semid, sockfd);
     return numbytes;
 }
@@ -206,50 +219,16 @@ void signal_sem(int semid, ksockfd_t i)
     }
 }
 
-queue init_queue()
+window init_window()
 {
-    queue Q;
-    Q.front = -1;
-    Q.rear = -1;
-    for (int i = 0; i < QUEUEMAXLEN; i++)
+    window W;
+    W.base = 0;
+    W.size = WINDOWSIZE;
+    W.last_ack = 0;
+    for (int i = 0; i < WINDOWSIZE; i++)
     {
-
-        Q.buff[i] = NULL;
-        Q.len[i] = 0;
+        W.msg_seq[i] = i + 1;
+        W.received[i] = false;
     }
-
-    return Q;
-}
-
-bool is_empty(queue *Q)
-{
-    return (Q->front == -1);
-}
-
-bool is_full(queue *Q)
-{
-    return (Q->front == (Q->rear + 1) % QUEUEMAXLEN);
-}
-
-int enqueue(queue *Q, const char *msg)
-{
-    if (is_full(Q))
-        return -1;
-
-    // TODO
-
-    return 0;
-}
-
-int dequeue(queue *Q, char *buf)
-{
-    if (is_empty(Q))
-    {
-        errno = ENOMESSAGE;
-        return -1;
-    }
-
-    // TODO
-
-    return 0;
+    return W;
 }

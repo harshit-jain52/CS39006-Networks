@@ -75,7 +75,6 @@ typedef struct k_sockinfo
     char send_buff[BUFFSIZE][MSGSIZE]; // Send buffer for the KTP socket
     char recv_buff[BUFFSIZE][MSGSIZE]; // Receive buffer for the KTP socket
     bool send_buff_empty[BUFFSIZE];    // Whether the corresponding message in the send buffer is empty
-    bool recv_buff_empty[BUFFSIZE];    // Whether the corresponding message in the recv buffer is empty
     window swnd;                       // Send window for the KTP socket, that contains the seq no's of the messages sent but not yet acknowledged
     window rwnd;                       // Receive window for the KTP socket, indicating the seq no's expected by the receiver
     bool nospace;                      // whether the KTP socket has no space in the recv buffer

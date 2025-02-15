@@ -33,7 +33,6 @@ ksockfd_t k_socket(int domain, int type, int protocol)
             for (int j = 0; j < BUFFSIZE; j++)
             {
                 SM[i].send_buff_empty[j] = true;
-                SM[i].recv_buff_empty[j] = true;
             }
             SM[i].swnd = init_window();
             SM[i].rwnd = init_window();
@@ -137,11 +136,10 @@ ssize_t k_recvfrom(ksockfd_t sockfd, void *buf, size_t len, int flags, struct so
     int numbytes;
     int slot = (SM[sockfd].rwnd.base + SM[sockfd].rwnd.size) % WINDOWSIZE;
 
-    if (!SM[sockfd].recv_buff_empty[slot])
+    if (SM[sockfd].rwnd.received[slot])
     {
         memcpy(buf, SM[sockfd].recv_buff[slot], len);
         numbytes = strlen(SM[sockfd].recv_buff[slot]);
-        SM[sockfd].recv_buff_empty[slot] = true;
         SM[sockfd].rwnd.received[slot] = false;
         SM[sockfd].rwnd.msg_seq[slot] = (SM[sockfd].rwnd.msg_seq[(slot - 1 + WINDOWSIZE) % WINDOWSIZE] + 1) % MAXSEQ;
         SM[sockfd].rwnd.size++;

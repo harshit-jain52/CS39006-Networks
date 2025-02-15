@@ -211,9 +211,9 @@ void *threadR()
                         char type[MSGTYPE + 1], msg[MSGSIZE];
                         u_int16_t seq, rwnd;
                         strip_msg(buff, type, &seq, &rwnd, msg);
-                        printf("R: %s %d %d %s\n", type, seq, rwnd, msg);
                         if (!strcmp(type, "DATA"))
                         {
+                            printf("R: DATA %d %s through ksocket %d\n", seq, msg, i);
                             /*
                             * in-order message
                                 the message is written to the buffer after removing the KTP header, the free space in the buffer is computed and the rwnd size is updated accordingly.
@@ -244,7 +244,8 @@ void *threadR()
                                         {
                                             SM[i].rwnd.last_ack = SM[i].rwnd.msg_seq[new_last_ack];
                                             SM[i].rwnd.size -= (new_last_ack - SM[i].rwnd.base + 1);
-                                            printf("S: Sending ACK %d %d through ksocket %d\n", SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
+                                            SM[i].rwnd.base = (new_last_ack + 1) % WINDOWSIZE;
+                                            printf("S: ACK %d %d through ksocket %d\n", SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
                                             int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
                                             if (n < 0)
                                             {
@@ -254,7 +255,7 @@ void *threadR()
                                     }
                                     else
                                     {
-                                        printf("Duplicate message received: %u\n", seq);
+                                        printf("S: Duplicate message received: %u\t Send ACK %d %d through ksocket %d\n", seq, SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
                                         int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
                                         if (n < 0)
                                         {
@@ -272,6 +273,8 @@ void *threadR()
                         }
                         else if (!strcmp(type, "ACK"))
                         {
+                            printf("R: ACK %d %d through ksocket %d\n", seq, rwnd, i);
+
                             /*
                             * receives an ACK message
                             updates the swnd accordingly: slides the window till the last message acknowledged and increases/decreases
@@ -285,7 +288,7 @@ void *threadR()
                                 if (SM[i].swnd.msg_seq[j] == seq)
                                 {
                                     SM[i].swnd.base = (j + 1) % WINDOWSIZE;
-                                    SM[i].swnd.size -= (ctr + 1);
+                                    SM[i].swnd.size = rwnd;
                                     SM[i].swnd.last_ack = seq;
                                     break;
                                 }
@@ -372,7 +375,7 @@ void *threadS()
     while (1)
     {
         sleep(T / 2);
-        printf("S: WOKE UP\n");
+        // printf("S: WOKE UP\n");
         for (int i = 0; i < N; i++)
         {
             wait_sem(semid, i);
@@ -386,7 +389,7 @@ void *threadS()
                     {
                         if (SM[i].swnd.timeout[j] == -1)
                             break;
-                        printf("S: Retransmitting message %u through ksocket %d\n", SM[i].swnd.msg_seq[j], i);
+                        printf("S: Timeout; DATA %u through ksocket %d\n", SM[i].swnd.msg_seq[j], i);
                         int n = send_data(SM[i].sockfd, SM[i].dest_addr, SM[i].swnd.msg_seq[j], SM[i].send_buff[j]);
                         if (n < 0)
                         {
@@ -410,7 +413,7 @@ void *threadS()
                     {
                         if (!SM[i].send_buff_empty[j])
                         {
-                            printf("S: Sending message %u through ksocket %d\n", SM[i].swnd.msg_seq[j], i);
+                            printf("S: DATA %u through ksocket %d\n", SM[i].swnd.msg_seq[j], i);
                             int n = send_data(SM[i].sockfd, SM[i].dest_addr, SM[i].swnd.msg_seq[j], SM[i].send_buff[j]);
                             if (n < 0)
                             {

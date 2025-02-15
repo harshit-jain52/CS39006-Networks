@@ -21,7 +21,7 @@ int main()
 
     while (1)
     {   
-        sleep(5);
+        sleep(3);
         int n = k_recvfrom(sockfd, buf, MSGSIZE, 0, NULL, 0);
         if (n < 0)
         {

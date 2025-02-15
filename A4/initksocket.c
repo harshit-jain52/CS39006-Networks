@@ -20,22 +20,10 @@ Message Formats
 
 void strip_msg(char buf[], char *type, u_int16_t *seq, u_int16_t *rwnd, char *msg)
 {
-    for (int i = 0; i < MSGTYPE; i++)
-        type[i] = buf[i];
-
-    type[MSGTYPE] = '\0';
-
+    memcpy(type, buf, MSGTYPE);
     *seq = ntohs(*((u_int16_t *)(buf + MSGTYPE)));
     *rwnd = ntohs(*((u_int16_t *)(buf + MSGTYPE + sizeof(u_int16_t))));
-
-    for (int i = HEADERSIZE; i < MSGSIZE + HEADERSIZE; i++)
-        msg[i - HEADERSIZE] = buf[i];
-}
-
-void pad_string(char *str, int len)
-{
-    for (int i = strlen(str); i < len; i++)
-        str[i] = '\0';
+    memcpy(msg, buf + HEADERSIZE, MSGSIZE);
 }
 
 ssize_t send_ack(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, u_int16_t rwnd)
@@ -46,11 +34,10 @@ ssize_t send_ack(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, 
     memcpy(buff, type, MSGTYPE);
     memcpy(buff + MSGTYPE, &nseq, sizeof(u_int16_t));
     memcpy(buff + MSGTYPE + sizeof(u_int16_t), &nrwnd, sizeof(u_int16_t));
-    pad_string(buff, PACKETSIZE);
     return sendto(sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 }
 
-ssize_t send_data(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, char *msg)
+ssize_t send_data(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, const char *msg)
 {
     char buff[PACKETSIZE];
     char type[MSGTYPE] = "DATA";
@@ -59,10 +46,39 @@ ssize_t send_data(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq,
     memcpy(buff, type, MSGTYPE);
     memcpy(buff + MSGTYPE, &nseq, sizeof(u_int16_t));
     memcpy(buff + MSGTYPE + sizeof(u_int16_t), &nrwnd, sizeof(u_int16_t));
-    pad_string(buff, HEADERSIZE);
     memcpy(buff + MSGTYPE + 2 * sizeof(u_int16_t), msg, MSGSIZE);
-    pad_string(buff, PACKETSIZE);
+
+    // printf("Packet in hex:\n");
+    // for (int i = 0; i < PACKETSIZE; i++) {
+    //     printf("%02X ", (unsigned char)buff[i]);
+    // }
+    // printf("\n");
+
     return sendto(sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+}
+
+void cleanup(int signo)
+{
+    int shmid = k_shmget();
+    int semid = k_semget();
+
+    if (shmid != -1)
+    {
+        shmctl(shmid, IPC_RMID, 0);
+        printf("SHM %d removed\n", shmid);
+    }
+
+    if (semid != -1)
+    {
+        semctl(semid, 0, IPC_RMID);
+        printf("SEM %d removed\n", semid);
+    }
+
+    if (signo == SIGSEGV)
+    {
+        printf("Segmentation fault\n");
+    }
+    exit(0);
 }
 
 void initk_shm()
@@ -175,7 +191,7 @@ void *threadR()
                 for (int i = 0; i < N; i++)
                 {
                     wait_sem(semid, i);
-                    if (!SM[i].is_free && SM[i].sockfd == recvsocket)
+                    if (!SM[i].is_free && SM[i].is_bound && SM[i].sockfd == recvsocket)
                     {
                         printf("Server: Connection closed by client\n");
                         close(SM[i].sockfd);
@@ -190,12 +206,12 @@ void *threadR()
                 for (int i = 0; i < N; i++)
                 {
                     wait_sem(semid, i);
-                    if (!SM[i].is_free && SM[i].sockfd == recvsocket && SM[i].dest_addr.sin_addr.s_addr == sender_addr.sin_addr.s_addr && SM[i].dest_addr.sin_port == sender_addr.sin_port)
+                    if (!SM[i].is_free && SM[i].is_bound && SM[i].sockfd == recvsocket && SM[i].dest_addr.sin_addr.s_addr == sender_addr.sin_addr.s_addr && SM[i].dest_addr.sin_port == sender_addr.sin_port)
                     {
                         char type[MSGTYPE + 1], msg[MSGSIZE];
                         u_int16_t seq, rwnd;
                         strip_msg(buff, type, &seq, &rwnd, msg);
-
+                        printf("R: %s %d %d %s\n", type, seq, rwnd, msg);
                         if (!strcmp(type, "DATA"))
                         {
                             /*
@@ -215,7 +231,6 @@ void *threadR()
                                     if (!SM[i].rwnd.received[j])
                                     {
                                         SM[i].rwnd.received[j] = true;
-                                        SM[i].recv_buff[j] = (char *)malloc(MSGSIZE);
                                         memcpy(SM[i].recv_buff[j], msg, MSGSIZE);
 
                                         int new_last_ack = -1;
@@ -229,6 +244,7 @@ void *threadR()
                                         {
                                             SM[i].rwnd.last_ack = SM[i].rwnd.msg_seq[new_last_ack];
                                             SM[i].rwnd.size -= (new_last_ack - SM[i].rwnd.base + 1);
+                                            printf("S: Sending ACK %d %d through ksocket %d\n", SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
                                             int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
                                             if (n < 0)
                                             {
@@ -265,8 +281,7 @@ void *threadR()
                             for (int j = SM[i].swnd.base, ctr = 0; ctr < SM[i].swnd.size; j = (j + 1) % WINDOWSIZE, ctr++)
                             {
                                 SM[i].swnd.timeout[j] = -1;
-                                free(SM[i].send_buff[j]);
-                                SM[i].send_buff[j] = NULL;
+                                SM[i].send_buff_empty[j] = true;
                                 if (SM[i].swnd.msg_seq[j] == seq)
                                 {
                                     SM[i].swnd.base = (j + 1) % WINDOWSIZE;
@@ -302,10 +317,28 @@ void *threadR()
                 {
                     if (!SM[i].is_bound)
                     {
-                        SM[i].sockfd = syscall(SYS_pidfd_getfd, syscall(SYS_pidfd_open, SM[i].pid, 0), SM[i].sockfd, 0);
-                        FD_SET(SM[i].sockfd, &master);
-                        if (SM[i].sockfd > maxfd)
-                            maxfd = SM[i].sockfd;
+                        usockfd_t ksockfd = socket(AF_INET, SOCK_DGRAM, 0);
+                        if (ksockfd < 0)
+                        {
+                            perror("socket");
+                        }
+                        else
+                        {
+                            if (bind(ksockfd, (struct sockaddr *)&SM[i].src_addr, sizeof(SM[i].src_addr)) < 0)
+                            {
+                                perror("bind");
+                                close(ksockfd);
+                            }
+                            else
+                            {
+                                SM[i].sockfd = ksockfd;
+                                FD_SET(SM[i].sockfd, &master);
+                                if (SM[i].sockfd > maxfd)
+                                    maxfd = SM[i].sockfd;
+                                SM[i].is_bound = true;
+                                printf("R: Bound KTP socket %d to UDP socket %d\n", i, SM[i].sockfd);
+                            }
+                        }
                     }
                     else if (SM[i].nospace && SM[i].rwnd.size > 0)
                     {
@@ -317,7 +350,6 @@ void *threadR()
                         SM[i].nospace = false;
                     }
                 }
-
                 signal_sem(semid, i);
             }
         }
@@ -340,10 +372,11 @@ void *threadS()
     while (1)
     {
         sleep(T / 2);
+        printf("S: WOKE UP\n");
         for (int i = 0; i < N; i++)
         {
             wait_sem(semid, i);
-            if (!SM[i].is_free)
+            if (!SM[i].is_free && SM[i].is_bound)
             {
                 bool timeout = (SM[i].swnd.timeout[SM[i].swnd.base] > 0 && (time(NULL) - SM[i].swnd.timeout[SM[i].swnd.base]) >= T);
 
@@ -353,6 +386,7 @@ void *threadS()
                     {
                         if (SM[i].swnd.timeout[j] == -1)
                             break;
+                        printf("S: Retransmitting message %u through ksocket %d\n", SM[i].swnd.msg_seq[j], i);
                         int n = send_data(SM[i].sockfd, SM[i].dest_addr, SM[i].swnd.msg_seq[j], SM[i].send_buff[j]);
                         if (n < 0)
                         {
@@ -368,14 +402,15 @@ void *threadS()
         for (int i = 0; i < N; i++)
         {
             wait_sem(semid, i);
-            if (!SM[i].is_free)
+            if (!SM[i].is_free && SM[i].is_bound)
             {
                 for (int j = SM[i].swnd.base, ctr = 0; ctr < SM[i].swnd.size; j = (j + 1) % WINDOWSIZE, ctr++)
                 {
                     if (SM[i].swnd.timeout[j] == -1)
                     {
-                        if (SM[i].send_buff[j] != NULL)
+                        if (!SM[i].send_buff_empty[j])
                         {
+                            printf("S: Sending message %u through ksocket %d\n", SM[i].swnd.msg_seq[j], i);
                             int n = send_data(SM[i].sockfd, SM[i].dest_addr, SM[i].swnd.msg_seq[j], SM[i].send_buff[j]);
                             if (n < 0)
                             {
@@ -410,11 +445,12 @@ void *threadG()
             {
                 if (kill(SM[i].pid, 0) == -1)
                 {
-                    printf("Process %d terminated\n", SM[i].pid);
+                    printf("G: Process %d terminated\n", SM[i].pid);
                     close(SM[i].sockfd);
                     SM[i].is_free = true;
                 }
             }
+            signal_sem(semid, i);
         }
     }
 }
@@ -423,6 +459,8 @@ int main()
 {
     initk_shm();
     initk_sem();
+    signal(SIGINT, cleanup);
+    signal(SIGSEGV, cleanup);
 
     pthread_t rid, sid, gid;
     pthread_create(&rid, NULL, threadR, NULL);

@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 CC := gcc
-CFLAGS := -O2 -g -I. -Wall
+CFLAGS := -g -I. -Wall -L.
 RM := rm -f
 
 LIBNAME = libksocket.a 
@@ -12,10 +12,14 @@ library: $(OBJFILES)
 $(OBJFILES): ksocket.h ksocket.c
 
 clean:
-	-$(RM) $(OBJFILES) initk
+	-$(RM) $(OBJFILES) initk u1 u2
 
 deepclean:
-	-$(RM) $(OBJFILES) initk $(LIBNAME)
+	-$(RM) $(OBJFILES) initk $(LIBNAME) u1 u2
 
-build: library initksocket.c
-	$(CC) -Wall -L. -I. -o initk initksocket.c -lksocket
+build: library initksocket.c user1.c user2.c
+	$(CC) $(CFLAGS) -o initk initksocket.c -lksocket
+	$(CC) $(CFLAGS) -o u1 user1.c -lksocket
+	$(CC) $(CFLAGS) -o u2 user2.c -lksocket
+
+

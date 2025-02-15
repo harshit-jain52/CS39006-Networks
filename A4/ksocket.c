@@ -2,7 +2,7 @@
 
 ksockfd_t k_socket(int domain, int type, int protocol)
 {
-    if (type != SOCK_KTP)
+    if (type != SOCK_KTP || domain != AF_INET)
     {
         return -1;
     }
@@ -24,26 +24,22 @@ ksockfd_t k_socket(int domain, int type, int protocol)
         wait_sem(semid, i);
         if (SM[i].is_free)
         {
-            usockfd_t sockfd = socket(domain, SOCK_DGRAM, protocol);
-            if (sockfd < 0)
-            {
-                signal_sem(semid, i);
-                return -1;
-            }
-            SM[i].sockfd = sockfd;
             SM[i].pid = getpid();
             SM[i].is_free = false;
+            SM[i].is_bound = false;
+            bzero(&SM[i].src_addr, sizeof(SM[i].src_addr));
             bzero(&SM[i].dest_addr, sizeof(SM[i].dest_addr));
+
             for (int j = 0; j < BUFFSIZE; j++)
             {
-
-                SM[i].send_buff[j] = NULL;
-                SM[i].recv_buff[j] = NULL;
+                SM[i].send_buff_empty[j] = true;
+                SM[i].recv_buff_empty[j] = true;
             }
             SM[i].swnd = init_window();
             SM[i].rwnd = init_window();
             SM[i].nospace = false;
-            SM[i].is_bound = false;
+
+            printf("Socket created with ksockfd: %d\n", i);
             signal_sem(semid, i);
             return i;
         }
@@ -69,21 +65,15 @@ int k_bind(ksockfd_t sockfd, const char *src_ip, int src_port, const char *dest_
     }
     wait_sem(semid, sockfd);
 
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(src_port);
-    addr.sin_addr.s_addr = inet_addr(src_ip);
-
-    if (bind(SM[sockfd].sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-    {
-        signal_sem(semid, sockfd);
-        return -1;
-    }
+    SM[sockfd].src_addr.sin_family = AF_INET;
+    SM[sockfd].src_addr.sin_port = htons(src_port);
+    SM[sockfd].src_addr.sin_addr.s_addr = inet_addr(src_ip);
 
     SM[sockfd].dest_addr.sin_family = AF_INET;
     SM[sockfd].dest_addr.sin_port = htons(dest_port);
     SM[sockfd].dest_addr.sin_addr.s_addr = inet_addr(dest_ip);
 
+    printf("Socket bound with ksockfd: %d src_port: %d dest_port: %d\n", sockfd, src_port, dest_port);
     signal_sem(semid, sockfd);
     return 0;
 }
@@ -102,7 +92,6 @@ ssize_t k_sendto(ksockfd_t sockfd, const void *buf, size_t len, int flags, const
         return -1;
     }
     wait_sem(semid, sockfd);
-
     struct sockaddr_in *dest_addrin = (struct sockaddr_in *)dest_addr;
     if (SM[sockfd].is_free || SM[sockfd].dest_addr.sin_addr.s_addr != dest_addrin->sin_addr.s_addr || SM[sockfd].dest_addr.sin_port != dest_addrin->sin_port)
     {
@@ -113,17 +102,13 @@ ssize_t k_sendto(ksockfd_t sockfd, const void *buf, size_t len, int flags, const
 
     for (int j = SM[sockfd].swnd.base, ctr = 0; ctr < BUFFSIZE; j = (j + 1) % BUFFSIZE, ctr++)
     {
-        if (SM[sockfd].send_buff[j] == NULL)
+        if (SM[sockfd].send_buff_empty[j])
         {
-            SM[sockfd].send_buff[j] = (char *)malloc(MSGSIZE);
-            if (SM[sockfd].send_buff[j] == NULL)
-            {
-                signal_sem(semid, sockfd);
-                return -1;
-            }
             ssize_t copybytes = len < MSGSIZE ? len : MSGSIZE;
             memcpy(SM[sockfd].send_buff[j], buf, copybytes);
+            SM[sockfd].send_buff_empty[j] = false;
             SM[sockfd].swnd.timeout[j] = -1;
+            printf("k_sendto: Message %s sent with ksockfd: %d seq_no: %d\n", SM[sockfd].send_buff[j], sockfd, SM[sockfd].swnd.msg_seq[j]);
             signal_sem(semid, sockfd);
             return copybytes;
         }
@@ -152,12 +137,11 @@ ssize_t k_recvfrom(ksockfd_t sockfd, void *buf, size_t len, int flags, struct so
     int numbytes;
     int slot = (SM[sockfd].rwnd.base + SM[sockfd].rwnd.size) % WINDOWSIZE;
 
-    if (SM[sockfd].recv_buff[slot] != NULL)
+    if (!SM[sockfd].recv_buff_empty[slot])
     {
         memcpy(buf, SM[sockfd].recv_buff[slot], len);
         numbytes = strlen(SM[sockfd].recv_buff[slot]);
-        free(SM[sockfd].recv_buff[slot]);
-        SM[sockfd].recv_buff[slot] = NULL;
+        SM[sockfd].recv_buff_empty[slot] = true;
         SM[sockfd].rwnd.received[slot] = false;
         SM[sockfd].rwnd.msg_seq[slot] = (SM[sockfd].rwnd.msg_seq[(slot - 1 + WINDOWSIZE) % WINDOWSIZE] + 1) % MAXSEQ;
         SM[sockfd].rwnd.size++;
@@ -213,7 +197,7 @@ void wait_sem(int semid, ksockfd_t i)
     sb.sem_num = i;
     sb.sem_op = -1; // Lock
     sb.sem_flg = 0;
-
+    // printf("Thread %ld waiting for semaphore %d\n", pthread_self(), i);
     if (semop(semid, &sb, 1) == -1)
     {
         perror("wait_sem: semop");
@@ -227,7 +211,7 @@ void signal_sem(int semid, ksockfd_t i)
     sb.sem_num = i;
     sb.sem_op = 1; // Release
     sb.sem_flg = 0;
-
+    // printf("Thread %ld signalling semaphore %d\n",  pthread_self(), i);
     if (semop(semid, &sb, 1) == -1)
     {
         perror("signal_sem: semop");

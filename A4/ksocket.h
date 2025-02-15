@@ -66,16 +66,19 @@ typedef struct queue
 
 typedef struct k_sockinfo
 {
-    bool is_free;                 // whether the KTP socket is free or allotted
-    pid_t pid;                    // Process ID for the process that created the KTP socket
-    usockfd_t sockfd;             // mapping from the KTP socket to the corresponding UDP socket
-    struct sockaddr_in dest_addr; // IP & Port address of the other end of the KTP socket
-    bool is_bound;                // whether the KTP socket is bound to an IP & Port
-    char *send_buff[BUFFSIZE];    // Send buffer for the KTP socket
-    char *recv_buff[BUFFSIZE];    // Receive buffer for the KTP socket
-    window swnd;                  // Send window for the KTP socket, that contains the seq no's of the messages sent but not yet acknowledged
-    window rwnd;                  // Receive window for the KTP socket, indicating the seq no's expected by the receiver
-    bool nospace;                 // whether the KTP socket has no space in the recv buffer
+    bool is_free;                      // whether the KTP socket is free or allotted
+    pid_t pid;                         // Process ID for the process that created the KTP socket
+    usockfd_t sockfd;                  // mapping from the KTP socket to the corresponding UDP socket
+    struct sockaddr_in dest_addr;      // IP & Port address of the other end of the KTP socket
+    struct sockaddr_in src_addr;       // IP & Port address of the KTP socket
+    bool is_bound;                     // whether the KTP socket is bound to an IP & Port
+    char send_buff[BUFFSIZE][MSGSIZE]; // Send buffer for the KTP socket
+    char recv_buff[BUFFSIZE][MSGSIZE]; // Receive buffer for the KTP socket
+    bool send_buff_empty[BUFFSIZE];    // Whether the corresponding message in the send buffer is empty
+    bool recv_buff_empty[BUFFSIZE];    // Whether the corresponding message in the recv buffer is empty
+    window swnd;                       // Send window for the KTP socket, that contains the seq no's of the messages sent but not yet acknowledged
+    window rwnd;                       // Receive window for the KTP socket, indicating the seq no's expected by the receiver
+    bool nospace;                      // whether the KTP socket has no space in the recv buffer
 } k_sockinfo;
 
 union semun

@@ -21,11 +21,13 @@ int main()
 
     while (1)
     {   
-        sleep(3);
+        sleep(5);
         int n = k_recvfrom(sockfd, buf, MSGSIZE, 0, NULL, 0);
         if (n < 0)
         {
             perror("user2: k_recv");
+            sleep(1);
+            continue;
         }
         printf("user2: received %s\n", buf);
     }

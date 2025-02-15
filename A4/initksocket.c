@@ -288,19 +288,10 @@ void *threadR()
                                 if (SM[i].swnd.msg_seq[j] == seq)
                                 {
                                     SM[i].swnd.base = (j + 1) % WINDOWSIZE;
-                                    SM[i].swnd.size = rwnd;
-                                    SM[i].swnd.last_ack = seq;
                                     break;
                                 }
                             }
-                            if (rwnd > SM[i].swnd.size)
-                            {
-                                for (int j = 0; j < rwnd; j++)
-                                {
-                                    SM[i].swnd.msg_seq[(SM[i].swnd.base + j) % WINDOWSIZE] = (SM[i].swnd.last_ack + j + 1) % MAXSEQ;
-                                }
-                                SM[i].swnd.size = rwnd;
-                            }
+                            SM[i].swnd.size = rwnd;
                         }
                         else
                         {

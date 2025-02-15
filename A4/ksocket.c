@@ -107,6 +107,8 @@ ssize_t k_sendto(ksockfd_t sockfd, const void *buf, size_t len, int flags, const
             memcpy(SM[sockfd].send_buff[j], buf, copybytes);
             SM[sockfd].send_buff_empty[j] = false;
             SM[sockfd].swnd.timeout[j] = -1;
+            SM[sockfd].swnd.msg_seq[j] = (SM[sockfd].swnd.last_seq) % MAXSEQ + 1;
+            SM[sockfd].swnd.last_seq = SM[sockfd].swnd.msg_seq[j];
             printf("k_sendto: Message %s sent with ksockfd: %d seq_no: %d\n", SM[sockfd].send_buff[j], sockfd, SM[sockfd].swnd.msg_seq[j]);
             signal_sem(semid, sockfd);
             return copybytes;
@@ -223,6 +225,7 @@ window init_window()
     W.base = 0;
     W.size = WINDOWSIZE;
     W.last_ack = 0;
+    W.last_seq = 0;
     for (int i = 0; i < WINDOWSIZE; i++)
     {
         W.msg_seq[i] = i + 1;

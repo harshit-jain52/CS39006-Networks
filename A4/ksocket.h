@@ -27,7 +27,7 @@ typedef int usockfd_t;
 #define HEADERSIZE (MSGTYPE + 2 * sizeof(u_int16_t)) // Bytes
 #define PACKETSIZE (HEADERSIZE + MSGSIZE)            // Bytes
 #define SEQSIZE 8                                    // Bits
-#define MAXSEQ (1 << SEQSIZE) - 1                    // Sequence Space
+#define MAXSEQ (1 << SEQSIZE)                        // Sequence Space
 #define BUFFSIZE 10                                  // Messages
 #define QUEUEMAXLEN BUFFSIZE
 #define WINDOWSIZE BUFFSIZE
@@ -50,8 +50,9 @@ typedef struct window
 {
     int size;
     int base;
-    int last_ack;
     u_int16_t msg_seq[WINDOWSIZE];
+    int last_ack; // For rwnd
+    int last_seq; // For swnd
     bool received[WINDOWSIZE];  // For rwnd
     time_t timeout[WINDOWSIZE]; // For swnd
 } window;

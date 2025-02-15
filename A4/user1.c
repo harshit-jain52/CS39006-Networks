@@ -24,16 +24,17 @@ int main()
     addr.sin_port = htons(PORT2);
     addr.sin_addr.s_addr = inet_addr(IP);
     sleep(2);
-    for (int i = 0; i < 10; i++)
+    for (int i = 0; i < 20; i++)
     {
         memset(buf, 'A' + i, MSGSIZE);
+    again:
         int numbytes = k_sendto(sockfd, buf, MSGSIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
         if (numbytes < 0)
         {
             perror("user1: k_send");
-            return -1;
+            sleep(1);
+            goto again;
         }
-
         printf("user1: Sent %d bytes.\n", numbytes);
     }
     pause();

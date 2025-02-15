@@ -40,19 +40,19 @@ void pad_string(char *str, int len)
 
 ssize_t send_ack(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, u_int16_t rwnd)
 {
-    char buff[HEADERSIZE + MSGSIZE];
+    char buff[PACKETSIZE];
     char type[MSGTYPE] = "ACK\0";
     u_int16_t nseq = htons(seq), nrwnd = htons(rwnd);
     memcpy(buff, type, MSGTYPE);
     memcpy(buff + MSGTYPE, &nseq, sizeof(u_int16_t));
     memcpy(buff + MSGTYPE + sizeof(u_int16_t), &nrwnd, sizeof(u_int16_t));
-    pad_string(buff, HEADERSIZE + MSGSIZE);
-    return sendto(sockfd, buff, HEADERSIZE + MSGSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    pad_string(buff, PACKETSIZE);
+    return sendto(sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 }
 
 ssize_t send_data(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, char *msg)
 {
-    char buff[HEADERSIZE + MSGSIZE];
+    char buff[PACKETSIZE];
     char type[MSGTYPE] = "DATA";
     u_int16_t nseq = htons(seq);
     u_int16_t nrwnd = htons(0);
@@ -61,8 +61,8 @@ ssize_t send_data(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq,
     memcpy(buff + MSGTYPE + sizeof(u_int16_t), &nrwnd, sizeof(u_int16_t));
     pad_string(buff, HEADERSIZE);
     memcpy(buff + MSGTYPE + 2 * sizeof(u_int16_t), msg, MSGSIZE);
-    pad_string(buff, HEADERSIZE + MSGSIZE);
-    return sendto(sockfd, buff, HEADERSIZE + MSGSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    pad_string(buff, PACKETSIZE);
+    return sendto(sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 }
 
 void initk_shm()
@@ -156,7 +156,7 @@ void *threadR()
         for (int i = 0; i < N; i++)
         {
             wait_sem(semid, i);
-            if (!SM[i].is_free && FD_ISSET(SM[i].sockfd, &rfds))
+            if (!SM[i].is_free && SM[i].is_bound && FD_ISSET(SM[i].sockfd, &rfds))
             {
                 recvsocket = SM[i].sockfd;
                 numbytes = recvfrom(SM[i].sockfd, buff, MSGSIZE + HEADERSIZE, 0, (struct sockaddr *)&sender_addr, &addr_len);
@@ -196,7 +196,7 @@ void *threadR()
                         u_int16_t seq, rwnd;
                         strip_msg(buff, type, &seq, &rwnd, msg);
 
-                        if (!strcmp(type, "DATA")) // Data Message
+                        if (!strcmp(type, "DATA"))
                         {
                             /*
                             * in-order message
@@ -228,7 +228,7 @@ void *threadR()
                                         if (new_last_ack != -1)
                                         {
                                             SM[i].rwnd.last_ack = SM[i].rwnd.msg_seq[new_last_ack];
-                                            SM[i].rwnd.size -= new_last_ack - SM[i].rwnd.base + 1;
+                                            SM[i].rwnd.size -= (new_last_ack - SM[i].rwnd.base + 1);
                                             int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
                                             if (n < 0)
                                             {
@@ -248,8 +248,13 @@ void *threadR()
                                     break;
                                 }
                             }
+
+                            if (SM[i].rwnd.size == 0)
+                            {
+                                SM[i].nospace = true;
+                            }
                         }
-                        else if (!strcmp(type, "ACK")) // ACK Message
+                        else if (!strcmp(type, "ACK"))
                         {
                             /*
                             * receives an ACK message
@@ -265,7 +270,7 @@ void *threadR()
                                 if (SM[i].swnd.msg_seq[j] == seq)
                                 {
                                     SM[i].swnd.base = (j + 1) % WINDOWSIZE;
-                                    SM[i].swnd.size -= ctr + 1;
+                                    SM[i].swnd.size -= (ctr + 1);
                                     SM[i].swnd.last_ack = seq;
                                     break;
                                 }
@@ -295,8 +300,24 @@ void *threadR()
                 wait_sem(semid, i);
                 if (!SM[i].is_free)
                 {
-                    FD_SET(SM[i].sockfd, &master);
+                    if (!SM[i].is_bound)
+                    {
+                        SM[i].sockfd = syscall(SYS_pidfd_getfd, syscall(SYS_pidfd_open, SM[i].pid, 0), SM[i].sockfd, 0);
+                        FD_SET(SM[i].sockfd, &master);
+                        if (SM[i].sockfd > maxfd)
+                            maxfd = SM[i].sockfd;
+                    }
+                    else if (SM[i].nospace && SM[i].rwnd.size > 0)
+                    {
+                        int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
+                        if (n < 0)
+                        {
+                            perror("send_ack");
+                        }
+                        SM[i].nospace = false;
+                    }
                 }
+
                 signal_sem(semid, i);
             }
         }
@@ -324,15 +345,7 @@ void *threadS()
             wait_sem(semid, i);
             if (!SM[i].is_free)
             {
-                bool timeout = false;
-                for (int j = SM[i].swnd.base, ctr = 0; ctr < SM[i].swnd.size; j = (j + 1) % WINDOWSIZE, ctr++)
-                {
-                    if (SM[i].swnd.timeout[j] > 0 && (time(NULL) - SM[i].swnd.timeout[j]) >= T)
-                    {
-                        timeout = true;
-                        break;
-                    }
-                }
+                bool timeout = (SM[i].swnd.timeout[SM[i].swnd.base] > 0 && (time(NULL) - SM[i].swnd.timeout[SM[i].swnd.base]) >= T);
 
                 if (timeout)
                 {
@@ -379,14 +392,42 @@ void *threadS()
     }
 }
 
+/* Garbage Collector */
+
+void *threadG()
+{
+    int shmid = k_shmget();
+    int semid = k_semget();
+    k_sockinfo *SM = k_shmat(shmid);
+
+    while (1)
+    {
+        sleep(T);
+        for (int i = 0; i < N; i++)
+        {
+            wait_sem(semid, i);
+            if (!SM[i].is_free)
+            {
+                if (kill(SM[i].pid, 0) == -1)
+                {
+                    printf("Process %d terminated\n", SM[i].pid);
+                    close(SM[i].sockfd);
+                    SM[i].is_free = true;
+                }
+            }
+        }
+    }
+}
+
 int main()
 {
     initk_shm();
     initk_sem();
 
-    pthread_t rid, sid;
+    pthread_t rid, sid, gid;
     pthread_create(&rid, NULL, threadR, NULL);
     pthread_create(&sid, NULL, threadS, NULL);
+    pthread_create(&gid, NULL, threadG, NULL);
 
     pthread_exit(NULL);
 }

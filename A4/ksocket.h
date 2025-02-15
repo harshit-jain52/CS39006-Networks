@@ -16,6 +16,8 @@
 #include <errno.h>
 #include <pthread.h>
 #include <time.h>
+#include <sys/syscall.h>
+#include <signal.h>
 
 typedef int ksockfd_t;
 typedef int usockfd_t;
@@ -23,6 +25,7 @@ typedef int usockfd_t;
 #define MSGSIZE 512                                  // Bytes
 #define MSGTYPE 4                                    // BytesInHeader
 #define HEADERSIZE (MSGTYPE + 2 * sizeof(u_int16_t)) // Bytes
+#define PACKETSIZE (HEADERSIZE + MSGSIZE)            // Bytes
 #define SEQSIZE 8                                    // Bits
 #define MAXSEQ (1 << SEQSIZE) - 1                    // Sequence Space
 #define BUFFSIZE 10                                  // Messages
@@ -67,6 +70,7 @@ typedef struct k_sockinfo
     pid_t pid;                    // Process ID for the process that created the KTP socket
     usockfd_t sockfd;             // mapping from the KTP socket to the corresponding UDP socket
     struct sockaddr_in dest_addr; // IP & Port address of the other end of the KTP socket
+    bool is_bound;                // whether the KTP socket is bound to an IP & Port
     char *send_buff[BUFFSIZE];    // Send buffer for the KTP socket
     char *recv_buff[BUFFSIZE];    // Receive buffer for the KTP socket
     window swnd;                  // Send window for the KTP socket, that contains the seq no's of the messages sent but not yet acknowledged

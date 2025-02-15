@@ -43,6 +43,7 @@ ksockfd_t k_socket(int domain, int type, int protocol)
             SM[i].swnd = init_window();
             SM[i].rwnd = init_window();
             SM[i].nospace = false;
+            SM[i].is_bound = false;
             signal_sem(semid, i);
             return i;
         }
@@ -149,8 +150,23 @@ ssize_t k_recvfrom(ksockfd_t sockfd, void *buf, size_t len, int flags, struct so
     wait_sem(semid, sockfd);
 
     int numbytes;
+    int slot = (SM[sockfd].rwnd.base + SM[sockfd].rwnd.size) % WINDOWSIZE;
 
-    // TO DO
+    if (SM[sockfd].recv_buff[slot] != NULL)
+    {
+        memcpy(buf, SM[sockfd].recv_buff[slot], len);
+        numbytes = strlen(SM[sockfd].recv_buff[slot]);
+        free(SM[sockfd].recv_buff[slot]);
+        SM[sockfd].recv_buff[slot] = NULL;
+        SM[sockfd].rwnd.received[slot] = false;
+        SM[sockfd].rwnd.msg_seq[slot] = (SM[sockfd].rwnd.msg_seq[(slot - 1 + WINDOWSIZE) % WINDOWSIZE] + 1) % MAXSEQ;
+        SM[sockfd].rwnd.size++;
+    }
+    else
+    {
+        numbytes = -1;
+        errno = ENOMESSAGE;
+    }
 
     signal_sem(semid, sockfd);
     return numbytes;

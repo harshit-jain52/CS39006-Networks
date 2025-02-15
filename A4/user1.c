@@ -23,12 +23,35 @@ int main()
     addr.sin_family = AF_INET;
     addr.sin_port = htons(PORT2);
     addr.sin_addr.s_addr = inet_addr(IP);
-    sleep(2);
-    for (int i = 0; i < 20; i++)
+
+    // FILE *fp = fopen("lorem_10KB.txt", "r");
+    FILE *fp = fopen("lorem_100KB.txt", "r");
+    if (fp == NULL)
     {
-        memset(buf, 'A' + i, MSGSIZE);
+        perror("user1: fopen");
+        return -1;
+    }
+    sleep(2);
+    while (1)
+    {
+        size_t bytesRead = fread(buf, 1, MSGSIZE, fp);
+        if (bytesRead == 0)
+        {
+            if (feof(fp))
+            {
+                printf("user1: End of file reached.\n");
+                break;
+            }
+            else
+            {
+                perror("user1: fread");
+                fclose(fp);
+                return -1;
+            }
+        }
+
     again:
-        int numbytes = k_sendto(sockfd, buf, MSGSIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
+        int numbytes = k_sendto(sockfd, buf, bytesRead, 0, (struct sockaddr *)&addr, sizeof(addr));
         if (numbytes < 0)
         {
             perror("user1: k_send");
@@ -37,5 +60,7 @@ int main()
         }
         printf("user1: Sent %d bytes.\n", numbytes);
     }
+
     pause();
+    fclose(fp);
 }

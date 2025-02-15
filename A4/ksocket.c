@@ -109,7 +109,7 @@ ssize_t k_sendto(ksockfd_t sockfd, const void *buf, size_t len, int flags, const
             SM[sockfd].swnd.timeout[j] = -1;
             SM[sockfd].swnd.msg_seq[j] = (SM[sockfd].swnd.last_seq) % MAXSEQ + 1;
             SM[sockfd].swnd.last_seq = SM[sockfd].swnd.msg_seq[j];
-            printf("k_sendto: Message %s sent with ksockfd: %d seq_no: %d\n", SM[sockfd].send_buff[j], sockfd, SM[sockfd].swnd.msg_seq[j]);
+            printf("k_sendto: Message %s sent with ksockfd: %d seq_no: %d index: %d\n", SM[sockfd].send_buff[j], sockfd, SM[sockfd].swnd.msg_seq[j], j);
             signal_sem(semid, sockfd);
             return copybytes;
         }
@@ -141,7 +141,8 @@ ssize_t k_recvfrom(ksockfd_t sockfd, void *buf, size_t len, int flags, struct so
     if (SM[sockfd].rwnd.received[slot])
     {
         memcpy(buf, SM[sockfd].recv_buff[slot], len);
-        numbytes = strlen(SM[sockfd].recv_buff[slot]);
+        printf("k_recvfrom: Message %s received with ksockfd: %d seq_no: %d index: %d\n", (char *)buf, sockfd, SM[sockfd].rwnd.msg_seq[slot], slot);
+        numbytes = strlen((char *)buf);
         SM[sockfd].rwnd.received[slot] = false;
         SM[sockfd].rwnd.msg_seq[slot] = (SM[sockfd].rwnd.msg_seq[(slot - 1 + WINDOWSIZE) % WINDOWSIZE] + 1) % MAXSEQ;
         SM[sockfd].rwnd.size++;

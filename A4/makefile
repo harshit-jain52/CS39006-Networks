@@ -12,10 +12,10 @@ library: $(OBJFILES)
 $(OBJFILES): ksocket.h ksocket.c
 
 clean:
-	-$(RM) $(OBJFILES) initk u1 u2
+	-$(RM) $(OBJFILES) initk u1 u2 received*.txt
 
-deepclean:
-	-$(RM) $(OBJFILES) initk $(LIBNAME) u1 u2
+deepclean: clean
+	-$(RM) $(LIBNAME)
 
 build: library initksocket.c user1.c user2.c
 	$(CC) $(CFLAGS) -o initk initksocket.c -lksocket

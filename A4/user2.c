@@ -19,9 +19,16 @@ int main()
         return -1;
     }
 
+    // FILE *fp = fopen("received_10KB.txt", "w");
+    FILE *fp = fopen("received_100KB.txt", "w");
+    if (fp == NULL)
+    {
+        perror("user2: fopen");
+        return -1;
+    }
     while (1)
-    {   
-        sleep(5);
+    {
+        sleep(2);
         int n = k_recvfrom(sockfd, buf, MSGSIZE, 0, NULL, 0);
         if (n < 0)
         {
@@ -29,6 +36,11 @@ int main()
             sleep(1);
             continue;
         }
-        printf("user2: received %s\n", buf);
+
+        fwrite(buf, 1, n, fp);
+        fflush(fp);
+        printf("user2: received %d bytes\n", n);
     }
+
+    fclose(fp);
 }

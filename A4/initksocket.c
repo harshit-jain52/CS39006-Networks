@@ -156,7 +156,7 @@ void *threadR()
     int semid = k_semget();
     k_sockinfo *SM = k_shmat(shmid);
 
-    char buff[MSGSIZE + HEADERSIZE];
+    char buff[PACKETSIZE];
 
     for (;;)
     {
@@ -175,7 +175,7 @@ void *threadR()
             if (!SM[i].is_free && SM[i].is_bound && FD_ISSET(SM[i].sockfd, &rfds))
             {
                 recvsocket = SM[i].sockfd;
-                numbytes = recvfrom(SM[i].sockfd, buff, MSGSIZE + HEADERSIZE, 0, (struct sockaddr *)&sender_addr, &addr_len);
+                numbytes = recvfrom(SM[i].sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&sender_addr, &addr_len);
             }
             signal_sem(semid, i);
         }
@@ -245,7 +245,7 @@ void *threadR()
                                             SM[i].rwnd.last_ack = SM[i].rwnd.msg_seq[new_last_ack];
                                             SM[i].rwnd.size -= (new_last_ack - SM[i].rwnd.base + 1);
                                             SM[i].rwnd.base = (new_last_ack + 1) % WINDOWSIZE;
-                                            printf("S: ACK %d %d through ksocket %d\n", SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
+                                            printf("R: Sent ACK %d %d through ksocket %d\n", SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
                                             int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
                                             if (n < 0)
                                             {
@@ -255,7 +255,7 @@ void *threadR()
                                     }
                                     else
                                     {
-                                        printf("S: Duplicate message received: %u\t Send ACK %d %d through ksocket %d\n", seq, SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
+                                        printf("R: Duplicate message received: %u\t Send ACK %d %d through ksocket %d\n", seq, SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
                                         int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
                                         if (n < 0)
                                         {

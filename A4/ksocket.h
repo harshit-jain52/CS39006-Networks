@@ -15,6 +15,7 @@
 #include <sys/sem.h>
 #include <errno.h>
 #include <pthread.h>
+#include <time.h>
 
 typedef int ksockfd_t;
 typedef int usockfd_t;
@@ -48,7 +49,8 @@ typedef struct window
     int base;
     int last_ack;
     u_int16_t msg_seq[WINDOWSIZE];
-    bool received[WINDOWSIZE];
+    bool received[WINDOWSIZE];  // For rwnd
+    time_t timeout[WINDOWSIZE]; // For swnd
 } window;
 
 typedef struct queue

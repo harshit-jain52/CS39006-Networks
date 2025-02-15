@@ -50,6 +50,21 @@ ssize_t send_ack(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, 
     return sendto(sockfd, buff, HEADERSIZE + MSGSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 }
 
+ssize_t send_data(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, char *msg)
+{
+    char buff[HEADERSIZE + MSGSIZE];
+    char type[MSGTYPE] = "DATA";
+    u_int16_t nseq = htons(seq);
+    u_int16_t nrwnd = htons(0);
+    memcpy(buff, type, MSGTYPE);
+    memcpy(buff + MSGTYPE, &nseq, sizeof(u_int16_t));
+    memcpy(buff + MSGTYPE + sizeof(u_int16_t), &nrwnd, sizeof(u_int16_t));
+    pad_string(buff, HEADERSIZE);
+    memcpy(buff + MSGTYPE + 2 * sizeof(u_int16_t), msg, MSGSIZE);
+    pad_string(buff, HEADERSIZE + MSGSIZE);
+    return sendto(sockfd, buff, HEADERSIZE + MSGSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+}
+
 void initk_shm()
 {
     key_t key = ftok(SHM_PATH, SHM_ID);
@@ -244,6 +259,9 @@ void *threadR()
 
                             for (int j = SM[i].swnd.base, ctr = 0; ctr < SM[i].swnd.size; j = (j + 1) % WINDOWSIZE, ctr++)
                             {
+                                SM[i].swnd.timeout[j] = -1;
+                                free(SM[i].send_buff[j]);
+                                SM[i].send_buff[j] = NULL;
                                 if (SM[i].swnd.msg_seq[j] == seq)
                                 {
                                     SM[i].swnd.base = (j + 1) % WINDOWSIZE;
@@ -294,9 +312,70 @@ that can be sent. If so, it sends that message through the UDP sendto() call for
 */
 void *threadS()
 {
+    int shmid = k_shmget();
+    int semid = k_semget();
+    k_sockinfo *SM = k_shmat(shmid);
+
     while (1)
     {
         sleep(T / 2);
+        for (int i = 0; i < N; i++)
+        {
+            wait_sem(semid, i);
+            if (!SM[i].is_free)
+            {
+                bool timeout = false;
+                for (int j = SM[i].swnd.base, ctr = 0; ctr < SM[i].swnd.size; j = (j + 1) % WINDOWSIZE, ctr++)
+                {
+                    if (SM[i].swnd.timeout[j] > 0 && (time(NULL) - SM[i].swnd.timeout[j]) >= T)
+                    {
+                        timeout = true;
+                        break;
+                    }
+                }
+
+                if (timeout)
+                {
+                    for (int j = SM[i].swnd.base, ctr = 0; ctr < SM[i].swnd.size; j = (j + 1) % WINDOWSIZE, ctr++)
+                    {
+                        if (SM[i].swnd.timeout[j] == -1)
+                            break;
+                        int n = send_data(SM[i].sockfd, SM[i].dest_addr, SM[i].swnd.msg_seq[j], SM[i].send_buff[j]);
+                        if (n < 0)
+                        {
+                            perror("send_data");
+                        }
+                        SM[i].swnd.timeout[j] = time(NULL) + T;
+                    }
+                }
+            }
+            signal_sem(semid, i);
+        }
+
+        for (int i = 0; i < N; i++)
+        {
+            wait_sem(semid, i);
+            if (!SM[i].is_free)
+            {
+                for (int j = SM[i].swnd.base, ctr = 0; ctr < SM[i].swnd.size; j = (j + 1) % WINDOWSIZE, ctr++)
+                {
+                    if (SM[i].swnd.timeout[j] == -1)
+                    {
+                        if (SM[i].send_buff[j] != NULL)
+                        {
+                            int n = send_data(SM[i].sockfd, SM[i].dest_addr, SM[i].swnd.msg_seq[j], SM[i].send_buff[j]);
+                            if (n < 0)
+                            {
+                                perror("send_data");
+                            }
+                            SM[i].swnd.timeout[j] = time(NULL) + T;
+                        }
+                        break;
+                    }
+                }
+            }
+            signal_sem(semid, i);
+        }
     }
 }
 

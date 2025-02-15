@@ -110,7 +110,7 @@ ssize_t k_sendto(ksockfd_t sockfd, const void *buf, size_t len, int flags, const
         return -1;
     }
 
-    for (int j = 0; j < BUFFSIZE; j++)
+    for (int j = SM[sockfd].swnd.base, ctr = 0; ctr < BUFFSIZE; j = (j + 1) % BUFFSIZE, ctr++)
     {
         if (SM[sockfd].send_buff[j] == NULL)
         {
@@ -120,12 +120,12 @@ ssize_t k_sendto(ksockfd_t sockfd, const void *buf, size_t len, int flags, const
                 signal_sem(semid, sockfd);
                 return -1;
             }
+            ssize_t copybytes = len < MSGSIZE ? len : MSGSIZE;
+            memcpy(SM[sockfd].send_buff[j], buf, copybytes);
+            SM[sockfd].swnd.timeout[j] = -1;
+            signal_sem(semid, sockfd);
+            return copybytes;
         }
-
-        size_t copybytes = len < MSGSIZE ? len : MSGSIZE;
-        memcpy(SM[sockfd].send_buff[j], buf, copybytes);
-        signal_sem(semid, sockfd);
-        return copybytes;
     }
 
     signal_sem(semid, sockfd);
@@ -229,6 +229,7 @@ window init_window()
     {
         W.msg_seq[i] = i + 1;
         W.received[i] = false;
+        W.timeout[i] = -1;
     }
     return W;
 }

@@ -123,7 +123,9 @@ ssize_t k_recvfrom(ksockfd_t sockfd, void *buf, size_t len, int flags, struct so
 
     if (SM[sockfd].rwnd.received[slot]){
         memcpy(buf, SM[sockfd].recv_buff[slot], len);
-        printf("k_recvfrom: Message %s received with ksockfd: %d seq_no: %d index: %d\n", (char *)buf, sockfd, SM[sockfd].rwnd.msg_seq[slot] - WINDOWSIZE, slot);
+        int num = SM[sockfd].rwnd.msg_seq[slot] - WINDOWSIZE;
+        if(num <= 0) num += MAXSEQ;
+        printf("k_recvfrom: Message %s received with ksockfd: %d seq_no: %d index: %d\n", (char *)buf, sockfd, num, slot);
         numbytes = strlen((char *)buf);
         SM[sockfd].rwnd.received[slot] = false;
         SM[sockfd].rwnd.size++;

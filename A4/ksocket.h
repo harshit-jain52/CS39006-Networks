@@ -26,7 +26,7 @@ typedef int usockfd_t;
 #define MSGTYPE 4                                    // BytesInHeader
 #define HEADERSIZE (MSGTYPE + 2 * sizeof(u_int16_t)) // Bytes
 #define PACKETSIZE (HEADERSIZE + MSGSIZE)            // Bytes
-#define SEQSIZE 8                                    // Bits
+#define SEQSIZE 5                                    // Bits
 #define MAXSEQ (1 << SEQSIZE)                        // Sequence Space
 #define BUFFSIZE 10                                  // Messages
 #define QUEUEMAXLEN BUFFSIZE

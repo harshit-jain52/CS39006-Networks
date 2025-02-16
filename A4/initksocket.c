@@ -427,7 +427,8 @@ void *threadG(){
 }
 
 int main(){
-    srand(time(0));
+    srand(time(NULL));
+
     initk_shm();
     initk_sem();
     signal(SIGINT, cleanup);

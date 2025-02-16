@@ -19,9 +19,12 @@
 #include <sys/syscall.h>
 #include <signal.h>
 
+// Socket Types
 typedef int ksockfd_t;
 typedef int usockfd_t;
+#define SOCK_KTP 256
 
+// Numeric Constants
 #define MSGSIZE 512                                  // Bytes
 #define MSGTYPE 4                                    // BytesInHeader
 #define HEADERSIZE (MSGTYPE + 2 * sizeof(u_int16_t)) // Bytes
@@ -29,21 +32,21 @@ typedef int usockfd_t;
 #define SEQSIZE 5                                    // Bits
 #define MAXSEQ (1 << SEQSIZE)                        // Sequence Space
 #define BUFFSIZE 10                                  // Messages
-#define QUEUEMAXLEN BUFFSIZE
 #define WINDOWSIZE BUFFSIZE
-#define T 5  // Timeout Seconds
-#define N 10 // Number of active sockets
-#define P 0.3
-
-#define SOCK_KTP SOCK_DGRAM // Socket type
+#define T 5   // Timeout Seconds
+#define N 10  // Number of active sockets
+#define P 0.3 // Probability of dropping a message
 
 // Error codes
 #define ENOSPACE ENOSPC
 #define ENOTBOUND ENOTCONN
 #define ENOMESSAGE ENOMSG
 
+// Shared Memory
 #define SHM_PATH "/ktp_shm"
 #define SHM_ID 'K'
+
+// Semaphore
 #define SEM_PATH "/ktp_sem"
 #define SEM_ID 'K'
 
@@ -52,19 +55,11 @@ typedef struct window
     int base;
     u_int16_t size;
     u_int16_t msg_seq[WINDOWSIZE];
+    u_int16_t last_seq;
     u_int16_t last_ack;         // For rwnd
-    u_int16_t last_seq;         // For swnd
     bool received[WINDOWSIZE];  // For rwnd
     time_t timeout[WINDOWSIZE]; // For swnd
 } window;
-
-typedef struct queue
-{
-    char *buff[QUEUEMAXLEN];
-    int len[QUEUEMAXLEN];
-    int front;
-    int rear;
-} queue;
 
 typedef struct k_sockinfo
 {
@@ -90,7 +85,7 @@ union semun
     unsigned short *array;
 };
 
-// User Functions
+// User Functions ---------------------------------------------------------------------------------------------------------------------------------------------
 
 /*
 Opens an UDP socket with the socket() call. The parameters to these are the same as the normal socket() call, except that it will take only
@@ -125,23 +120,36 @@ Closes the socket and cleans up the corresponding socket entry in the SM and mar
 */
 int k_close(ksockfd_t fd);
 
-// Internal Functions
+// Internal Functions ---------------------------------------------------------------------------------------------------------------------------------------------
 
-// Shared Memory
+// Shared Memory Functions ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+// Get SHM ID
 int k_shmget();
+
+// Attach SHM and return pointer to it
 k_sockinfo *k_shmat();
+
+// Detach SHM
 int k_shmdt(k_sockinfo *);
 
-// Semaphore
+// Semaphore Functions ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+// Get Semaphore ID
 int k_semget();
+
+// Wait Semaphore
 void wait_sem(int semid, ksockfd_t i);
+
+// Signal Semaphore
 void signal_sem(int semid, ksockfd_t i);
 
-// Window
+// Window Functions +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+// Initialize Window
 window init_window();
 
-/*
-* Simulate unreliable links
-generates a random number between 0 and 1. If the generated number is < p, then the function returns 1, else it returns 0
-*/
+// Simulate unreliable links +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+// Generates a random number between 0 and 1. If the generated number is < p, then the function returns 1, else it returns 0
 bool dropMessage(float p);

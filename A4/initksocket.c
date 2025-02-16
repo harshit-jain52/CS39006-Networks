@@ -2,22 +2,15 @@
 #define SELECT_TIMEOUT 100000 // Timeout (in usec) for select()
 
 /*
-Message Formats
-
-* Data Message
-    * Header: 4 + 2*sizeof(u_int16_t) = 8 bytes
-        * "DATA" (4 bytes)
-        * SEQ (2 bytes)
-    * Message: 512 bytes
-
-* ACK Message
-    * Header: 4 + 2*sizeof(u_int16_t) = 8 bytes
-        * "ACK\0" (4 bytes)
-        * SEQ (2 bytes)
-        * RWND (2 bytes)
-    * Message: 0 bytes
+Packet Format
+* Header: 4 + 2*sizeof(u_int16_t) = 8 bytes
+    * "DATA" or "ACK\0" (4 bytes)
+    * SEQ (2 bytes)
+    * RWND (2 bytes) (0 for DATA message)
+* Message: 512 bytes (Blank for ACK message)
 */
 
+// Extracts the message type, sequence number, rwnd size and message from the packet
 void strip_msg(char buf[], char *type, u_int16_t *seq, u_int16_t *rwnd, char *msg){
     memcpy(type, buf, MSGTYPE);
     *seq = ntohs(*((u_int16_t *)(buf + MSGTYPE)));
@@ -25,6 +18,7 @@ void strip_msg(char buf[], char *type, u_int16_t *seq, u_int16_t *rwnd, char *ms
     memcpy(msg, buf + HEADERSIZE, MSGSIZE);
 }
 
+// Sends an ACK packet to the destination address with the given sequence number and rwnd size
 ssize_t send_ack(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, u_int16_t rwnd){
     char buff[PACKETSIZE];
     char type[MSGTYPE] = "ACK\0";
@@ -35,6 +29,7 @@ ssize_t send_ack(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, 
     return sendto(sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 }
 
+// Sends a DATA packet to the destination address with the given sequence number and message
 ssize_t send_data(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, const char *msg){
     char buff[PACKETSIZE];
     char type[MSGTYPE] = "DATA";
@@ -54,6 +49,7 @@ ssize_t send_data(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq,
     return sendto(sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 }
 
+// Deletes the shared memory and semaphore on program exit
 void cleanup(int signo){
     int shmid = k_shmget();
     int semid = k_semget();
@@ -74,6 +70,7 @@ void cleanup(int signo){
     exit(0);
 }
 
+// Initializes the shared memory with the k_sockinfo structure
 void initk_shm(){
     key_t key = ftok(SHM_PATH, SHM_ID);
     int shmid = shmget(key, N * sizeof(k_sockinfo), IPC_CREAT | 0777 | IPC_EXCL);
@@ -96,6 +93,7 @@ void initk_shm(){
     shmdt(SM);
 }
 
+// Initializes the semaphore with N semaphores, one semaphore for each KTP socket
 void initk_sem(){
     key_t key = ftok(SEM_PATH, SEM_ID);
     int semid = semget(key, N, IPC_CREAT | 0777 | IPC_EXCL);
@@ -121,7 +119,7 @@ void initk_sem(){
 
 /*
 Waits for a message to come in a recvfrom() call from any of the UDP sockets (keep on checking whether there is any incoming message on any of the UDP sockets,
-on timeout check whether a new KTP socket has been created and include it in the read/write set accordingly).
+on timeout check whether a new KTP socket has been created and include it in the read/write set accordingly
 When it receives a message,
 * if it is a data message, it stores it in the receiver-side message buffer for the corresponding KTP socket, and sends an ACK message to the sender.
 In addition, it also sets a flag "nospace" if the available space at the receive buffer is zero.
@@ -229,12 +227,6 @@ void *threadR(){
                                             SM[i].rwnd.size -= (new_last_ack - SM[i].rwnd.base + WINDOWSIZE) % WINDOWSIZE + 1;
                                             SM[i].rwnd.base = (new_last_ack + 1) % WINDOWSIZE;
                                             printf("R: Sent ACK %d %d through ksocket %d\n", SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
-                                            // printf("%d %d\n", SM[i].rwnd.base, SM[i].rwnd.size);
-                                            // for (int j = 0; j < WINDOWSIZE; j++)
-                                            // {
-                                            //     printf("%d ", SM[i].rwnd.msg_seq[j]);
-                                            // }
-                                            // printf("\n");
                                             int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
                                             if (n < 0){
                                                 perror("send_ack");
@@ -247,12 +239,6 @@ void *threadR(){
                             }
                             if (duplicate){
                                 printf("R: Duplicate message received: %u\t Sent ACK %d %d through ksocket %d\n", seq, SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
-                                // printf("%d %d\n", SM[i].rwnd.base, SM[i].rwnd.size);
-                                // for (int j = 0; j < WINDOWSIZE; j++)
-                                // {
-                                //     printf("%d ", SM[i].rwnd.msg_seq[j]);
-                                // }
-                                // printf("\n");
                                 int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
                                 if (n < 0){
                                     perror("send_ack");
@@ -285,12 +271,6 @@ void *threadR(){
                                 }
                             }
                             SM[i].swnd.size = rwnd;
-                            // printf("%d %d\n", SM[i].swnd.base, SM[i].swnd.size);
-                            // for (int j = 0; j < WINDOWSIZE; j++)
-                            // {
-                            //     printf("%d ", SM[i].swnd.msg_seq[j]);
-                            // }
-                            // printf("\n");
                         }
                         else{
                             printf("Invalid message type: %s\n", type);
@@ -394,8 +374,10 @@ void *threadS(){
     }
 }
 
-/* Garbage Collector */
-
+/*
+Garbage Collector
+Periodically checks whether the KTP sockets are closed (by k_close) or the corresponding process has terminated
+*/
 void *threadG(){
     int semid = k_semget();
     k_sockinfo *SM = k_shmat();
@@ -427,13 +409,18 @@ void *threadG(){
 }
 
 int main(){
+    // Seed random number generator
     srand(time(NULL));
 
+    // Initialize shared memory and semaphore
     initk_shm();
     initk_sem();
+
+    // Set up signal handlers
     signal(SIGINT, cleanup);
     signal(SIGSEGV, cleanup);
 
+    // Spawn threads R, S, G
     pthread_t rid, sid, gid;
     pthread_create(&rid, NULL, threadR, NULL);
     pthread_create(&sid, NULL, threadS, NULL);

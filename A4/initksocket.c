@@ -178,6 +178,8 @@ void *threadR()
                 numbytes = recvfrom(SM[i].sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&sender_addr, &addr_len);
             }
             signal_sem(semid, i);
+            if (recvsocket != -1)
+                break;
         }
 
         if (recvsocket != -1)
@@ -211,9 +213,15 @@ void *threadR()
                         char type[MSGTYPE + 1], msg[MSGSIZE];
                         u_int16_t seq, rwnd;
                         strip_msg(buff, type, &seq, &rwnd, msg);
+                        if (dropMessage(P))
+                        {
+                            printf("Dropped: %s %d coming through ksocket %d\n", type, seq, i);
+                            signal_sem(semid, i);
+                            continue;
+                        }
                         if (!strcmp(type, "DATA"))
                         {
-                            printf("R: DATA %d %s through ksocket %d\n", seq, msg, i);
+                            printf("R: DATA %d through ksocket %d\n", seq, i);
                             /*
                             * in-order message
                                 the message is written to the buffer after removing the KTP header, the free space in the buffer is computed and the rwnd size is updated accordingly.
@@ -223,13 +231,15 @@ void *threadR()
                             * duplicate messages
                                 identifying them with the sequence number and then dropping them if already received once
                             */
-
+                            SM[i].nospace = false;
+                            bool duplicate = true;
                             for (int j = SM[i].rwnd.base, ctr = 0; ctr < SM[i].rwnd.size; j = (j + 1) % WINDOWSIZE, ctr++)
                             {
                                 if (SM[i].rwnd.msg_seq[j] == seq)
                                 {
                                     if (!SM[i].rwnd.received[j])
                                     {
+                                        duplicate = false;
                                         SM[i].rwnd.received[j] = true;
                                         memcpy(SM[i].recv_buff[j], msg, MSGSIZE);
 
@@ -243,9 +253,23 @@ void *threadR()
                                         if (new_last_ack != -1)
                                         {
                                             SM[i].rwnd.last_ack = SM[i].rwnd.msg_seq[new_last_ack];
-                                            SM[i].rwnd.size -= (new_last_ack - SM[i].rwnd.base + 1);
+                                            for (int k = SM[i].rwnd.base, ct = 0;; k = (k + 1) % WINDOWSIZE, ct++)
+                                            {
+                                                SM[i].rwnd.msg_seq[k] = (SM[i].rwnd.last_seq) % MAXSEQ + 1;
+                                                SM[i].rwnd.last_seq = SM[i].rwnd.msg_seq[k];
+                                                if (k == new_last_ack)
+                                                    break;
+                                            }
+
+                                            SM[i].rwnd.size -= (new_last_ack - SM[i].rwnd.base + WINDOWSIZE) % WINDOWSIZE + 1;
                                             SM[i].rwnd.base = (new_last_ack + 1) % WINDOWSIZE;
                                             printf("R: Sent ACK %d %d through ksocket %d\n", SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
+                                            // printf("%d %d\n", SM[i].rwnd.base, SM[i].rwnd.size);
+                                            // for (int j = 0; j < WINDOWSIZE; j++)
+                                            // {
+                                            //     printf("%d ", SM[i].rwnd.msg_seq[j]);
+                                            // }
+                                            // printf("\n");
                                             int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
                                             if (n < 0)
                                             {
@@ -253,16 +277,23 @@ void *threadR()
                                             }
                                         }
                                     }
-                                    else
-                                    {
-                                        printf("R: Duplicate message received: %u\t Send ACK %d %d through ksocket %d\n", seq, SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
-                                        int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
-                                        if (n < 0)
-                                        {
-                                            perror("send_ack");
-                                        }
-                                    }
+
                                     break;
+                                }
+                            }
+                            if (duplicate)
+                            {
+                                printf("R: Duplicate message received: %u\t Sent ACK %d %d through ksocket %d\n", seq, SM[i].rwnd.last_ack, SM[i].rwnd.size, i);
+                                // printf("%d %d\n", SM[i].rwnd.base, SM[i].rwnd.size);
+                                // for (int j = 0; j < WINDOWSIZE; j++)
+                                // {
+                                //     printf("%d ", SM[i].rwnd.msg_seq[j]);
+                                // }
+                                // printf("\n");
+                                int n = send_ack(SM[i].sockfd, SM[i].dest_addr, SM[i].rwnd.last_ack, SM[i].rwnd.size);
+                                if (n < 0)
+                                {
+                                    perror("send_ack");
                                 }
                             }
 
@@ -274,24 +305,35 @@ void *threadR()
                         else if (!strcmp(type, "ACK"))
                         {
                             printf("R: ACK %d %d through ksocket %d\n", seq, rwnd, i);
-
                             /*
                             * receives an ACK message
                             updates the swnd accordingly: slides the window till the last message acknowledged and increases/decreases
                             the window size based on the piggybacked rwnd size in the ACK message
                             */
-
                             for (int j = SM[i].swnd.base, ctr = 0; ctr < SM[i].swnd.size; j = (j + 1) % WINDOWSIZE, ctr++)
                             {
-                                SM[i].swnd.timeout[j] = -1;
-                                SM[i].send_buff_empty[j] = true;
                                 if (SM[i].swnd.msg_seq[j] == seq)
                                 {
+                                    for (int k = SM[i].swnd.base;; k = (k + 1) % WINDOWSIZE)
+                                    {
+                                        SM[i].swnd.timeout[k] = -1;
+                                        SM[i].send_buff_empty[k] = true;
+                                        SM[i].swnd.msg_seq[k] = (SM[i].swnd.last_seq) % MAXSEQ + 1;
+                                        SM[i].swnd.last_seq = SM[i].swnd.msg_seq[k];
+                                        if (k == j)
+                                            break;
+                                    }
                                     SM[i].swnd.base = (j + 1) % WINDOWSIZE;
                                     break;
                                 }
                             }
                             SM[i].swnd.size = rwnd;
+                            // printf("%d %d\n", SM[i].swnd.base, SM[i].swnd.size);
+                            // for (int j = 0; j < WINDOWSIZE; j++)
+                            // {
+                            //     printf("%d ", SM[i].swnd.msg_seq[j]);
+                            // }
+                            // printf("\n");
                         }
                         else
                         {
@@ -341,7 +383,6 @@ void *threadR()
                         {
                             perror("send_ack");
                         }
-                        SM[i].nospace = false;
                     }
                 }
                 signal_sem(semid, i);
@@ -451,6 +492,7 @@ void *threadG()
 
 int main()
 {
+    srand(time(0));
     initk_shm();
     initk_sem();
     signal(SIGINT, cleanup);

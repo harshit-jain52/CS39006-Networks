@@ -107,8 +107,6 @@ ssize_t k_sendto(ksockfd_t sockfd, const void *buf, size_t len, int flags, const
             memcpy(SM[sockfd].send_buff[j], buf, copybytes);
             SM[sockfd].send_buff_empty[j] = false;
             SM[sockfd].swnd.timeout[j] = -1;
-            SM[sockfd].swnd.msg_seq[j] = (SM[sockfd].swnd.last_seq) % MAXSEQ + 1;
-            SM[sockfd].swnd.last_seq = SM[sockfd].swnd.msg_seq[j];
             printf("k_sendto: Message %s sent with ksockfd: %d seq_no: %d index: %d\n", SM[sockfd].send_buff[j], sockfd, SM[sockfd].swnd.msg_seq[j], j);
             signal_sem(semid, sockfd);
             return copybytes;
@@ -144,7 +142,6 @@ ssize_t k_recvfrom(ksockfd_t sockfd, void *buf, size_t len, int flags, struct so
         printf("k_recvfrom: Message %s received with ksockfd: %d seq_no: %d index: %d\n", (char *)buf, sockfd, SM[sockfd].rwnd.msg_seq[slot], slot);
         numbytes = strlen((char *)buf);
         SM[sockfd].rwnd.received[slot] = false;
-        SM[sockfd].rwnd.msg_seq[slot] = (SM[sockfd].rwnd.msg_seq[(slot - 1 + WINDOWSIZE) % WINDOWSIZE] + 1) % MAXSEQ;
         SM[sockfd].rwnd.size++;
     }
     else
@@ -226,7 +223,7 @@ window init_window()
     W.base = 0;
     W.size = WINDOWSIZE;
     W.last_ack = 0;
-    W.last_seq = 0;
+    W.last_seq = 10;
     for (int i = 0; i < WINDOWSIZE; i++)
     {
         W.msg_seq[i] = i + 1;
@@ -234,4 +231,9 @@ window init_window()
         W.timeout[i] = -1;
     }
     return W;
+}
+
+bool dropMessage(float p){
+    float r = (float)rand() / (float)RAND_MAX;
+    return r < p;
 }

@@ -33,6 +33,7 @@ typedef int usockfd_t;
 #define WINDOWSIZE BUFFSIZE
 #define T 5  // Timeout Seconds
 #define N 10 // Number of active sockets
+#define P 0.3
 
 #define SOCK_KTP SOCK_DGRAM // Socket type
 
@@ -48,11 +49,11 @@ typedef int usockfd_t;
 
 typedef struct window
 {
-    int size;
     int base;
+    u_int16_t size;
     u_int16_t msg_seq[WINDOWSIZE];
-    int last_ack; // For rwnd
-    int last_seq; // For swnd
+    u_int16_t last_ack;         // For rwnd
+    u_int16_t last_seq;         // For swnd
     bool received[WINDOWSIZE];  // For rwnd
     time_t timeout[WINDOWSIZE]; // For swnd
 } window;
@@ -137,3 +138,9 @@ void signal_sem(int semid, ksockfd_t i);
 
 // Window
 window init_window();
+
+/*
+* Simulate unreliable links
+generates a random number between 0 and 1. If the generated number is < p, then the function returns 1, else it returns 0
+*/
+bool dropMessage(float p);

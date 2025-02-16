@@ -3,6 +3,7 @@
 #define PORT2 5051
 const char *IP = "127.0.0.1";
 char buf[MSGSIZE];
+const char *eof_marker = "~";
 
 int main()
 {
@@ -40,7 +41,8 @@ int main()
             if (feof(fp))
             {
                 printf("user1: End of file reached.\n");
-                break;
+                memcpy(buf, eof_marker, 1);
+                bytesRead = 1;
             }
             else
             {
@@ -55,12 +57,25 @@ int main()
         if (numbytes < 0)
         {
             perror("user1: k_send");
-            sleep(1);
-            goto again;
+            if (errno == ENOSPACE || errno == ENOTBOUND)
+            {
+                sleep(1);
+                goto again;
+            }
+            fclose(fp);
+            k_close(sockfd);
+            return -1;
         }
         printf("user1: Sent %d bytes.\n", numbytes);
+        if(memcmp(buf, eof_marker, 1) == 0)
+        {
+            printf("user1: EOF marker sent.\n");
+            break;
+        }
     }
 
-    pause();
     fclose(fp);
+    sleep(100);
+    k_close(sockfd);
+    return 0;
 }

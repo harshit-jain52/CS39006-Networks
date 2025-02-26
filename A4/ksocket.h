@@ -16,8 +16,6 @@
 #include <errno.h>
 #include <pthread.h>
 #include <time.h>
-#include <sys/syscall.h>
-#include <signal.h>
 
 // Socket Types
 typedef int ksockfd_t;
@@ -71,7 +69,7 @@ typedef struct k_sockinfo
     bool is_bound;                     // whether the KTP socket is bound to an IP & Port
     char send_buff[BUFFSIZE][MSGSIZE]; // Send buffer for the KTP socket
     char recv_buff[BUFFSIZE][MSGSIZE]; // Receive buffer for the KTP socket
-    bool send_buff_empty[BUFFSIZE];    // Whether the corresponding message in the send buffer is empty
+    bool send_buff_empty[BUFFSIZE];    // Whether the corresponding slot in the send buffer is empty
     window swnd;                       // Send window for the KTP socket, that contains the seq no's of the messages sent but not yet acknowledged
     window rwnd;                       // Receive window for the KTP socket, indicating the seq no's expected by the receiver
     bool nospace;                      // whether the KTP socket has no space in the recv buffer

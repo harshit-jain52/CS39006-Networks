@@ -1,5 +1,7 @@
-#include "ksocket.h"
+#include <ksocket.h>
 #define SELECT_TIMEOUT 100000 // Timeout (in usec) for select()
+// int DATANO;
+// int ACKNO;
 
 /*
 Packet Format
@@ -9,6 +11,8 @@ Packet Format
     * RWND (2 bytes) (0 for DATA message)
 * Message: 512 bytes (Blank for ACK message)
 */
+
+/* Packet Handling Functions */
 
 // Extracts the message type, sequence number, rwnd size and message from the packet
 void strip_msg(char buf[], char *type, u_int16_t *seq, u_int16_t *rwnd, char *msg){
@@ -26,6 +30,7 @@ ssize_t send_ack(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq, 
     memcpy(buff, type, MSGTYPE);
     memcpy(buff + MSGTYPE, &nseq, sizeof(u_int16_t));
     memcpy(buff + MSGTYPE + sizeof(u_int16_t), &nrwnd, sizeof(u_int16_t));
+    // printf("R: ACK Message %d\n", ++ACKNO);
     return sendto(sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 }
 
@@ -46,6 +51,7 @@ ssize_t send_data(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq,
     // }
     // printf("\n");
 
+    // printf("S: DATA Message %d\n", ++DATANO);
     return sendto(sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 }
 
@@ -365,7 +371,6 @@ void *threadS(){
                             }
                             SM[i].swnd.timeout[j] = time(NULL) + T;
                         }
-                        break;
                     }
                 }
             }
@@ -412,6 +417,9 @@ int main(){
     // Seed random number generator
     srand(time(NULL));
 
+    // DATANO = 0;
+    // ACKNO = 0;
+    
     // Initialize shared memory and semaphore
     initk_shm();
     initk_sem();

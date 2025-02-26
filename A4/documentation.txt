@@ -1,0 +1,227 @@
+# END-TO-END RELIABLE FLOW CONTROL OVER UNRELIABLE COMMUNICATION CHANNELS
+--------------------------------------------------------------------------------
+
+## 1. DATA STRUCTURES
+================================================================================
+
+### 1.1 struct window
+
+Implements a sliding window based flow control
+
+┌──────────────────────┬─────────────────┬───────────────────────────────────────────────────┬────────────┐
+│ Field                │ Type            │ Description                                       │ For        │
+├──────────────────────┼─────────────────┼───────────────────────────────────────────────────┤────────────┤
+│ base                 │ int             │ Starting index of the window                      │ Both       |
+│ size                 │ u_int16_t       │ Window size                                       │ Both       |
+│ msg_seq[WINDOWSIZE]  │ u_int16_t       │ Array of sequence numbers for messages in window  │ Both       |
+│ last_seq             │ u_int16_t       │ Last sequence number used                         │ Both       |
+│ last_ack             │ u_int16_t       │ Last acknowledgment sent                          │ Receiver   |
+│ received[WINDOWSIZE] │ bool            │ Tracks whether messages have been received        │ Receiver   |
+│ timeout[WINDOWSIZE]  │ time_t          │ Timeout for retransmission  (-1 if not sent)      │ Sender     |
+└──────────────────────┴─────────────────┴───────────────────────────────────────────────────┘────────────┘
+
+### 1.2 struct k_sockinfo
+
+Maintains state for each KTP socket
+
+┌──────────────────────────────┬─────────────────────────┬──────────────────────────────────────────────┐
+│ Field                        │ Type                    │ Description                                  │
+├──────────────────────────────┼─────────────────────────┼──────────────────────────────────────────────┤
+│ is_free                      │ bool                    │ Whether KTP socket is available              │
+│ pid                          │ pid_t                   │ Process ID that created socket               │
+│ sockfd                       │ usockfd_t               │ Underlying UDP socket descriptor             │
+│ dest_addr                    │ struct sockaddr_in      │ Destination address information              │
+│ src_addr                     │ struct sockaddr_in      │ Source address information                   │
+│ is_bound                     │ bool                    │ Whether socket is bound                      │
+│ send_buff[BUFFSIZE][MSGSIZE] │ char                    │ Circular buffer for outgoing messages        │
+│ recv_buff[BUFFSIZE][MSGSIZE] │ char                    │ Circular buffer for incoming messages        │
+│ send_buff_empty[BUFFSIZE]    │ bool                    │ Tracks if send-buffer slots are empty        │
+│ swnd                         │ struct window           │ Send window: seq no's sent but not yet ACK'd │
+│ rwnd                         │ struct window           │ Receive window: seq no's expected            │
+│ nospace                      │ bool                    │ Flag for no space in recv buffer             │
+│ is_closed                    │ bool                    │ Whether socket has been closed by user       │
+└──────────────────────────────┴─────────────────────────┴──────────────────────────────────────────────┘
+
+### 1.3 union semun
+
+Helper structure for semaphore operations
+
+┌─────────┬──────────────────────┬───────────────────────────────────┐
+│ Field   │ Type                 │ Description                       │
+├─────────┼──────────────────────┼───────────────────────────────────┤
+│ val     │ int                  │ Single semaphore value            │
+│ buf     │ struct semid_ds *    │ Buffer for IPC_STAT, IPC_SET      │
+│ array   │ unsigned short *     │ Array for GETALL, SETALL          │
+└─────────┴──────────────────────┴───────────────────────────────────┘
+
+## 2. PUBLIC API FUNCTIONS (ksocket.c)
+================================================================================
+
+┌──────────────────────────────────────┬───────────────────────────────────────────────────┐
+│ Function                             │ Description                                       │
+├──────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ k_socket(domain, type, protocol)     │ Creates a new KTP socket. Finds a free socket     │
+│                                      │ entry in shared memory, initializes it, and       │
+│                                      │ returns the socket descriptor.                    │
+├──────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ k_bind(sockfd, src_ip, src_port,     │ Binds a KTP socket to source and destination      │
+│         dest_ip, dest_port)          │ addresses. Sets up addressing information.        │
+├──────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ k_sendto(sockfd, buf, len, flags,    │ Sends data through a KTP socket. Copies data to   │
+│          dest_addr, addrlen)         │ the send buffer for reliable delivery.            │
+├──────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ k_recvfrom(sockfd, buf, len, flags,  │ Receives data from a KTP socket. Retrieves data   │
+│            src_addr, addrlen)        │ from the receive buffer if available.             │
+├──────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ k_close(fd)                          │ Closes a KTP socket and marks it for cleanup.     │
+└──────────────────────────────────────┴───────────────────────────────────────────────────┘
+
+## 3. INTERNAL FUNCTIONS (ksocket.c)
+================================================================================
+
+### 3.1 Shared Memory Functions
+
+┌────────────────┬──────────────────────────────────────────────────────────────┐
+│ Function       │ Description                                                  │
+├────────────────┼──────────────────────────────────────────────────────────────┤
+│ k_shmget()     │ Gets the shared memory ID for the KTP socket structures.     │
+├────────────────┼──────────────────────────────────────────────────────────────┤
+│ k_shmat()      │ Attaches to shared memory and returns a pointer to it.       │
+├────────────────┼──────────────────────────────────────────────────────────────┤
+│ k_shmdt(SM)    │ Detaches from shared memory.                                 │
+└────────────────┴──────────────────────────────────────────────────────────────┘
+
+### 3.2 Semaphore Functions
+
+┌──────────────────────┬───────────────────────────────────────────────────────────┐
+│ Function             │ Description                                               │
+├──────────────────────┼───────────────────────────────────────────────────────────┤
+│ k_semget()           │ Gets the semaphore ID for synchronizing access to sockets │
+├──────────────────────┼───────────────────────────────────────────────────────────┤
+│ wait_sem(semid, i)   │ Acquires the semaphore for a specific socket.             │
+├──────────────────────┼───────────────────────────────────────────────────────────┤
+│ signal_sem(semid, i) │ Releases the semaphore for a specific socket.             │
+└──────────────────────┴───────────────────────────────────────────────────────────┘
+
+### 3.3 Window Functions
+
+┌─────────────────┬────────────────────────────────────────────────────────────┐
+│ Function        │ Description                                                │
+├─────────────────┼────────────────────────────────────────────────────────────┤
+│ init_window()   │ Initializes a window structure with default values.        │
+└─────────────────┴────────────────────────────────────────────────────────────┘
+
+### 3.4 Simulation Functions
+
+┌────────────────────┬─────────────────────────────────────────────────────────────┐
+│ Function           │ Description                                                 │
+├────────────────────┼─────────────────────────────────────────────────────────────┤
+│ dropMessage(p)     │ Simulates unreliable network by randomly dropping messages  │
+│                    │ with probability p.                                         │
+└────────────────────┴─────────────────────────────────────────────────────────────┘
+
+## 4. PROTOCOL IMPLEMENTATION FUNCTIONS (initksocket.c)
+================================================================================
+
+### 4.1 Packet Handling Functions
+
+┌────────────────────────────────────────┬───────────────────────────────────────────────────┐
+│ Function                               │ Description                                       │
+├────────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ strip_msg(buf, type, seq, rwnd, msg)   │ Extracts header and message components from a     │
+│                                        │ received packet.                                  │
+├────────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ send_ack(sockfd, dest_addr, seq, rwnd) │ Sends an acknowledgment packet with sequence      │
+│                                        │ number and window size.                           │
+├────────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ send_data(sockfd, dest_addr, seq, msg) │ Sends a data packet with sequence number and      │
+│                                        │ message content.                                  │
+└────────────────────────────────────────┴───────────────────────────────────────────────────┘
+
+### 4.2 System Management Functions
+
+┌────────────────────┬───────────────────────────────────────────────────────────┐
+│ Function           │ Description                                               │
+├────────────────────┼───────────────────────────────────────────────────────────┤
+│ initk_shm()        │ Initializes shared memory for socket structures.          │
+├────────────────────┼───────────────────────────────────────────────────────────┤
+│ initk_sem()        │ Initializes semaphores for synchronization.               │
+├────────────────────┼───────────────────────────────────────────────────────────┤
+│ cleanup(signo)     │ Signal handler that removes shared memory and semaphore   │
+│                    │ resources on program exit.                                │
+└────────────────────┴───────────────────────────────────────────────────────────┘
+
+### 4.3 Worker Threads
+
+┌────────────────┬──────────────────────────────────────────────────────────────────┐
+│ Function       │ Description                                                      │
+├────────────────┼──────────────────────────────────────────────────────────────────┤
+│ threadR()      │ Receiver thread that handles incoming packets. Processes DATA    │
+│                │ and ACK messages, manages receive windows, and sends             │
+│                │ acknowledgments; also handles actual binding of socket.          │
+├────────────────┼──────────────────────────────────────────────────────────────────┤
+│ threadS()      │ Sender thread that periodically checks for timeouts and sends    │
+│                │ new messages. Handles retransmissions for unacknowledged         │
+│                │ messages.                                                        │
+├────────────────┼──────────────────────────────────────────────────────────────────┤
+│ threadG()      │ Garbage collector thread that periodically checks for closed     │
+│                │ sockets or terminated processes and cleans up resources.         │
+└────────────────┴──────────────────────────────────────────────────────────────────┘
+
+### 4.4 Main Function
+
+┌────────────┬───────────────────────────────────────────────────────────────────────┐
+│ Function   │ Description                                                           │
+├────────────┼───────────────────────────────────────────────────────────────────────┤
+│ main()     │ Initializes the KTP system, sets up signal handlers, and spawns       │
+│            │ worker threads.                                                       │
+└────────────┴───────────────────────────────────────────────────────────────────────┘
+
+## 5. PROTOCOL DETAILS
+================================================================================
+
+The KTP protocol implements reliable data transfer over UDP with the following features:
+
+1. Packet Format:
+   - Header (8 bytes): 
+     - Message type ("DATA" or "ACK") - 4 bytes
+     - Sequence number - 2 bytes
+     - Receive window size - 2 bytes (0 for DATA messages)
+   - Message (512 bytes): Data payload (empty for ACK packets)
+
+2. Reliability Mechanisms:
+   - Sequence numbers for ordering
+   - Acknowledgments for reliability
+   - Timeout-based retransmission
+
+3. Flow Control:
+   - Sliding window-based
+   - Cumulative ACKs
+
+4. Implementation:
+   - Shared memory for inter-process communication
+   - Semaphores for synchronization
+   - Multiple worker threads for concurrent processing
+
+## 6. FINDINGS
+================================================================================
+
+File Size: 100 KB
+No. of messages generated: ceil(100000/512) + 1 [EOF marker] = 197
+Timeout: 5 seconds
+
+┌──────────────────────┬────────────────────────────┬────────────────────────────────────────────────────┐
+│ Drop probability (p) │ No. of DATA transmissions  │ Avg no. of transmissions made to send each message │
+├──────────────────────┼────────────────────────────┼────────────────────────────────────────────────────┤
+│ 0.00                 │ 197                        │ 1.000                                              |
+│ 0.05                 │ 234                        │ 1.188                                              |
+│ 0.10                 │ 286                        │ 1.452                                              |
+│ 0.15                 │ 360                        │ 1.827                                              |
+│ 0.20                 │ 386                        │ 1.959                                              |
+│ 0.25                 │ 397                        │ 2.015                                              |
+│ 0.30                 │ 466                        │ 2.365                                              |
+│ 0.35                 │ 562                        │ 2.853                                              |
+│ 0.40                 │ 669                        │ 3.396                                              |
+│ 0.45                 │ 683                        │ 3.467                                              |
+│ 0.50                 │ 707                        │ 3.589                                              |
+└──────────────────────┴────────────────────────────┴────────────────────────────────────────────────────┘

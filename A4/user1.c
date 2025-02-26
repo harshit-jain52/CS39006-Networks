@@ -1,12 +1,18 @@
-#include "ksocket.h"
-#define PORT1 5050
-#define PORT2 5051
-const char *IP = "127.0.0.1";
+#include <ksocket.h>
 char buf[MSGSIZE];
 const char *eof_marker = "~";
 
-int main()
+int main(int argc, char *argv[])
 {
+    if(argc != 5){
+        printf("Usage: %s <src_ip> <src_port> <dest_ip> <dest_port>\n", argv[0]);
+        return -1;
+    }
+    const char *src_ip = argv[1];
+    int src_port = atoi(argv[2]);
+    const char *dest_ip = argv[3];
+    int dest_port = atoi(argv[4]);
+
     ksockfd_t sockfd = k_socket(AF_INET, SOCK_KTP, 0);
     if (sockfd < 0)
     {
@@ -14,7 +20,7 @@ int main()
         return -1;
     }
 
-    if ((k_bind(sockfd, IP, PORT1, IP, PORT2)) < 0)
+    if ((k_bind(sockfd, src_ip, src_port, dest_ip, dest_port)) < 0)
     {
         perror("user1: k_bind");
         return -1;
@@ -22,8 +28,8 @@ int main()
 
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(PORT2);
-    addr.sin_addr.s_addr = inet_addr(IP);
+    addr.sin_port = htons(dest_port);
+    addr.sin_addr.s_addr = inet_addr(dest_ip);
 
     // FILE *fp = fopen("lorem_10KB.txt", "r");
     FILE *fp = fopen("lorem_100KB.txt", "r");

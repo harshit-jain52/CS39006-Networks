@@ -1,7 +1,4 @@
 #include <ksocket.h>
-#define PORT1 5050
-#define PORT2 5051
-const char *IP = "127.0.0.1";
 char buf[MSGSIZE];
 const char *eof_marker = "~";
 
@@ -25,7 +22,7 @@ int main(int argc, char *argv[])
 
     if ((k_bind(sockfd, src_ip, src_port, dest_ip, dest_port)) < 0)
     {
-        perror("user1: k_bind");
+        perror("user2: k_bind");
         return -1;
     }
 

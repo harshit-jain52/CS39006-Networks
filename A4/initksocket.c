@@ -135,6 +135,7 @@ In that case, it sends a duplicate ACK message with the last acknowledged sequen
 * if it is a duplicate ACK message, it just updates the swnd size.
 */
 void *threadR(){
+    // printf("Thread R: %ld\n", pthread_self());
     fd_set master, rfds;
     usockfd_t maxfd = 0;
     struct timeval tv;
@@ -168,16 +169,16 @@ void *threadR(){
         }
 
         if (recvsocket != -1){
-            if (numbytes < 0){
-                perror("recvfrom");
-            }
-            else if (numbytes == 0){
+            // if (numbytes < 0){
+            //     perror("recvfrom");
+            // }
+            if (numbytes <= 0){
                 for (int i = 0; i < N; i++){
                     wait_sem(semid, i);
                     if (!SM[i].is_free && SM[i].is_bound && SM[i].sockfd == recvsocket){
-                        printf("Server: Connection closed by client\n");
+                        printf("KTP %d: Connection closed from other end\n", i);
                         close(SM[i].sockfd);
-                        SM[i].is_free = true;
+                        SM[i].is_closed = true;
                         FD_CLR(SM[i].sockfd, &master);
                     }
                     signal_sem(semid, i);
@@ -292,6 +293,9 @@ void *threadR(){
                 if (!SM[i].is_free){
                     if (!SM[i].is_bound){
                         usockfd_t ksockfd = socket(AF_INET, SOCK_DGRAM, 0);
+                        int flags = fcntl(ksockfd, F_GETFL, 0);
+                        fcntl(ksockfd, F_SETFL, flags | O_NONBLOCK);
+
                         if (ksockfd < 0){
                             perror("socket");
                         }
@@ -331,6 +335,7 @@ It then checks the current swnd for each of the KTP sockets and determines wheth
 that can be sent. If so, it sends that message through the UDP sendto() call for the corresponding UDP socket and updates the send timestamp.
 */
 void *threadS(){
+    // printf("Thread S: %ld\n", pthread_self());
     int semid = k_semget();
     k_sockinfo *SM = k_shmat();
 
@@ -384,6 +389,7 @@ Garbage Collector
 Periodically checks whether the KTP sockets are closed (by k_close) or the corresponding process has terminated
 */
 void *threadG(){
+    // printf("Thread G: %ld\n", pthread_self());
     int semid = k_semget();
     k_sockinfo *SM = k_shmat();
 
@@ -399,13 +405,13 @@ void *threadG(){
                         ctsend += (SM[i].rwnd.timeout[j] != -1);
                     }
                     close(SM[i].sockfd);
-                    printf("G: KTP socket %d closed gracefully with %d msgs in recvbuff and %d msgs in sendbuff\n", i, ctrecv, ctsend);
                     SM[i].is_free = true;
+                    printf("G: KTP socket %d closed gracefully with %d msgs in recvbuff and %d msgs in sendbuff\n", i, ctrecv, ctsend);
                 }
                 else if (kill(SM[i].pid, 0) == -1){
-                    printf("G: Process %d terminated\n", SM[i].pid);
                     close(SM[i].sockfd);
                     SM[i].is_free = true;
+                    printf("G: Process %d terminated\n", SM[i].pid);
                 }
             }
             signal_sem(semid, i);

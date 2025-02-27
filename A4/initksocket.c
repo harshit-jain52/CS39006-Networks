@@ -1,12 +1,20 @@
 #include <ksocket.h>
 #define SELECT_TIMEOUT 100000 // Timeout (in usec) for select()
+#define CLOSE_SOCKET(i) do { \
+    FD_CLR(SM[i].sockfd, &master); \
+    SM[i].is_free = true; \
+    close(SM[i].sockfd); \
+    printf("Closed KTP socket %d\n", i); \
+} while (0)
+
+fd_set master;
 // int DATANO;
 // int ACKNO;
 
 /*
 Packet Format
 * Header: 4 + 2*sizeof(u_int16_t) = 8 bytes
-    * "DATA" or "ACK\0" (4 bytes)
+    * "DATA", "ACK\0", "FIN\0" or "FAK\0" (4 bytes)
     * SEQ (2 bytes)
     * RWND (2 bytes) (0 for DATA message)
 * Message: 512 bytes (Blank for ACK message)
@@ -52,6 +60,29 @@ ssize_t send_data(usockfd_t sockfd, struct sockaddr_in dest_addr, u_int16_t seq,
     // printf("\n");
 
     // printf("S: DATA Message %d\n", ++DATANO);
+    return sendto(sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+}
+
+
+// Sends a FIN packet to the destination address
+ssize_t send_fin(usockfd_t sockfd, struct sockaddr_in dest_addr){
+    char buff[PACKETSIZE];
+    char type[MSGTYPE] = "FIN\0";
+    u_int16_t nseq = htons(0), nrwnd = htons(0);
+    memcpy(buff, type, MSGTYPE);
+    memcpy(buff + MSGTYPE, &nseq, sizeof(u_int16_t));
+    memcpy(buff + MSGTYPE + sizeof(u_int16_t), &nrwnd, sizeof(u_int16_t));
+    return sendto(sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+}
+
+// Sends a FIN-ACK packet to the destination address
+ssize_t send_fin_ack(usockfd_t sockfd, struct sockaddr_in dest_addr){
+    char buff[PACKETSIZE];
+    char type[MSGTYPE] = "FAK\0";
+    u_int16_t nseq = htons(0), nrwnd = htons(0);
+    memcpy(buff, type, MSGTYPE);
+    memcpy(buff + MSGTYPE, &nseq, sizeof(u_int16_t));
+    memcpy(buff + MSGTYPE + sizeof(u_int16_t), &nrwnd, sizeof(u_int16_t));
     return sendto(sockfd, buff, PACKETSIZE, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 }
 
@@ -135,7 +166,7 @@ In that case, it sends a duplicate ACK message with the last acknowledged sequen
 * if it is a duplicate ACK message, it just updates the swnd size.
 */
 void *threadR(){
-    fd_set master, rfds;
+    fd_set rfds;
     usockfd_t maxfd = 0;
     struct timeval tv;
 
@@ -175,10 +206,8 @@ void *threadR(){
                 for (int i = 0; i < N; i++){
                     wait_sem(semid, i);
                     if (!SM[i].is_free && SM[i].is_bound && SM[i].sockfd == recvsocket){
-                        printf("Server: Connection closed by client\n");
-                        close(SM[i].sockfd);
-                        SM[i].is_free = true;
-                        FD_CLR(SM[i].sockfd, &master);
+                        printf("R: Connection closed by other end\n");
+                        SM[i].is_closed = true;
                     }
                     signal_sem(semid, i);
                 }
@@ -278,6 +307,18 @@ void *threadR(){
                             }
                             SM[i].swnd.size = rwnd;
                         }
+                        else if(!strcmp(type, "FIN")){
+                            printf("R: FIN through ksocket %d\n", i);
+                            int n = send_fin_ack(SM[i].sockfd, SM[i].dest_addr);
+                            if(n < 0){
+                                perror("send_fin_ack");
+                            }
+                            CLOSE_SOCKET(i);
+                        }
+                        else if(!strcmp(type, "FAK")){
+                            printf("R: FAK through ksocket %d\n", i);
+                            CLOSE_SOCKET(i);
+                        }
                         else{
                             printf("Invalid message type: %s\n", type);
                         }
@@ -340,20 +381,47 @@ void *threadS(){
         for (int i = 0; i < N; i++){
             wait_sem(semid, i);
             if (!SM[i].is_free && SM[i].is_bound){
-                bool timeout = (SM[i].swnd.timeout[SM[i].swnd.base] > 0 && (time(NULL) - SM[i].swnd.timeout[SM[i].swnd.base]) >= T);
-
-                if (timeout){
-                    for (int j = SM[i].swnd.base, ctr = 0; ctr < SM[i].swnd.size; j = (j + 1) % WINDOWSIZE, ctr++){
-                        if (SM[i].swnd.timeout[j] == -1)
-                            break;
-                        printf("S: Timeout; DATA %u through ksocket %d\n", SM[i].swnd.msg_seq[j], i);
-                        int n = send_data(SM[i].sockfd, SM[i].dest_addr, SM[i].swnd.msg_seq[j], SM[i].send_buff[j]);
-                        if (n < 0){
-                            perror("send_data");
+                if(SM[i].is_closed){
+                    if(SM[i].fin_time==-1){
+                        printf("S: FIN through ksocket %d\n", i);
+                        int n = send_fin(SM[i].sockfd, SM[i].dest_addr);
+                        if(n < 0){
+                            perror("send_fin");
                         }
-                        SM[i].swnd.timeout[j] = time(NULL) + T;
+                        SM[i].fin_time = time(NULL);
+                    }
+                    else if(time(NULL) - SM[i].fin_time >= T){
+                        if(SM[i].fin_retries<F){
+                            printf("S: FIN through ksocket %d (retry %d)\n", i, ++SM[i].fin_retries);
+                            int n = send_fin(SM[i].sockfd, SM[i].dest_addr);
+                            if(n < 0){
+                                perror("send");
+                            }
+                            SM[i].fin_time = time(NULL);
+                        }
+                        else{
+                            printf("S: FAK not received; closing ksocket %d\n", i);
+                            CLOSE_SOCKET(i);
+                        }
                     }
                 }
+                else{
+                    bool timeout = (SM[i].swnd.timeout[SM[i].swnd.base] > 0 && (time(NULL) - SM[i].swnd.timeout[SM[i].swnd.base]) >= T);
+
+                    if (timeout){
+                        for (int j = SM[i].swnd.base, ctr = 0; ctr < SM[i].swnd.size; j = (j + 1) % WINDOWSIZE, ctr++){
+                            if (SM[i].swnd.timeout[j] == -1)
+                                break;
+                            printf("S: Timeout; DATA %u through ksocket %d\n", SM[i].swnd.msg_seq[j], i);
+                            int n = send_data(SM[i].sockfd, SM[i].dest_addr, SM[i].swnd.msg_seq[j], SM[i].send_buff[j]);
+                            if (n < 0){
+                                perror("send_data");
+                            }
+                            SM[i].swnd.timeout[j] = time(NULL) + T;
+                        }
+                    }
+                }
+                
             }
             signal_sem(semid, i);
         }
@@ -391,21 +459,10 @@ void *threadG(){
         sleep(T);
         for (int i = 0; i < N; i++){
             wait_sem(semid, i);
-            if (!SM[i].is_free){
-                if (SM[i].is_closed){
-                    int ctrecv = 0, ctsend = 0;
-                    for (int j = 0; j < WINDOWSIZE; j++){
-                        ctrecv += SM[i].rwnd.received[j];
-                        ctsend += (SM[i].rwnd.timeout[j] != -1);
-                    }
-                    close(SM[i].sockfd);
-                    printf("G: KTP socket %d closed gracefully with %d msgs in recvbuff and %d msgs in sendbuff\n", i, ctrecv, ctsend);
-                    SM[i].is_free = true;
-                }
-                else if (kill(SM[i].pid, 0) == -1){
+            if (!SM[i].is_free && !SM[i].is_closed){
+                if (kill(SM[i].pid, 0) == -1){
                     printf("G: Process %d terminated\n", SM[i].pid);
-                    close(SM[i].sockfd);
-                    SM[i].is_free = true;
+                    SM[i].is_closed = true;
                 }
             }
             signal_sem(semid, i);
@@ -423,6 +480,8 @@ int main(){
     // Initialize shared memory and semaphore
     initk_shm();
     initk_sem();
+
+    FD_ZERO(&master);
 
     // Set up signal handlers
     signal(SIGINT, cleanup);

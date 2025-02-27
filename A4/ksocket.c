@@ -32,6 +32,9 @@ ksockfd_t k_socket(int domain, int type, int protocol){
             SM[i].rwnd = init_window();
             SM[i].nospace = false;
 
+            SM[i].fin_retries = 0;
+            SM[i].fin_time = -1;
+            
             printf("Socket created with ksockfd: %d\n", i);
             signal_sem(semid, i);
             return i;
@@ -118,6 +121,11 @@ ssize_t k_recvfrom(ksockfd_t sockfd, void *buf, size_t len, int flags, struct so
     }
     wait_sem(semid, sockfd);
 
+    if(SM[sockfd].is_free){
+        signal_sem(semid, sockfd);
+        errno = ENOTCONN;
+        return -1;
+    }
     int numbytes;
     int slot = (SM[sockfd].rwnd.base + SM[sockfd].rwnd.size) % WINDOWSIZE;
 
@@ -150,7 +158,8 @@ int k_close(ksockfd_t fd){
         return -1;
     }
     wait_sem(semid, fd);
-    SM[fd].is_closed = true;
+    if(!SM[fd].is_free)
+        SM[fd].is_closed = true;
     printf("k_close: Socket closed with ksockfd: %d\n", fd);
     signal_sem(semid, fd);
     return 0;

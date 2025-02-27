@@ -34,6 +34,7 @@ typedef int usockfd_t;
 #define T 5   // Timeout Seconds
 #define N 10  // Number of active sockets
 #define P 0.3 // Probability of dropping a message
+#define F 5   // No. of FIN retransmissions
 
 // Error codes
 #define ENOSPACE ENOSPC
@@ -74,6 +75,8 @@ typedef struct k_sockinfo
     window rwnd;                       // Receive window for the KTP socket, indicating the seq no's expected by the receiver
     bool nospace;                      // whether the KTP socket has no space in the recv buffer
     bool is_closed;                    // whether the KTP socket is closed
+    time_t fin_time;                   // When last FIN was sent (-1 if not sent)
+    int fin_retries;                   // Number of retransmission attempts
 } k_sockinfo;
 
 union semun

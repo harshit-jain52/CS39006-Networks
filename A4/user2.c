@@ -26,8 +26,9 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    // FILE *fp = fopen("received_10KB.txt", "w");
-    FILE *fp = fopen("received_100KB.txt", "w");
+    char filename[100];
+    sprintf(filename, "received_%d.txt", src_port);
+    FILE *fp = fopen(filename, "w");
     if (fp == NULL)
     {
         perror("user2: fopen");

@@ -16,7 +16,6 @@
 #include <errno.h>
 #include <pthread.h>
 #include <time.h>
-#include <fcntl.h>
 
 // Socket Types
 typedef int ksockfd_t;

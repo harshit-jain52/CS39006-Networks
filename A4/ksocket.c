@@ -191,7 +191,6 @@ void wait_sem(int semid, ksockfd_t i){
     sb.sem_op = -1; // Lock
     sb.sem_flg = 0;
     // printf("Thread %ld waiting for semaphore %d\n", pthread_self(), i);
-    // printf("Observed value of semaphore %d: %d\n", i, semctl(semid, i, GETVAL));
     if (semop(semid, &sb, 1) == -1){
         perror("wait_sem: semop");
         exit(1);

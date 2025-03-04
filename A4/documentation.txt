@@ -138,6 +138,10 @@ Helper structure for semaphore operations
 ├────────────────────────────────────────┼───────────────────────────────────────────────────┤
 │ send_data(sockfd, dest_addr, seq, msg) │ Sends a data packet with sequence number and      │
 │                                        │ message content.                                  │
+├────────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ send_fin(sockfd, dest_addr)            │ Sends a FIN packet                                │
+├────────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ send_fin_ack(sockfd, dest_addr)        │ Sends a FIN-ACK packet                            │
 └────────────────────────────────────────┴───────────────────────────────────────────────────┘
 
 ### 4.2 System Management Functions

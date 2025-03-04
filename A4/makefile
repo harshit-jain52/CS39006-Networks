@@ -10,6 +10,8 @@ PORT4 := 8081
 LIBNAME = libksocket.a 
 OBJFILES = ksocket.o
 
+FOUR_USERS ?= 0
+
 library: $(OBJFILES)
 	ar rs $(LIBNAME) $(OBJFILES)
 
@@ -28,8 +30,10 @@ runinit: init
 runuser: user
 	gnome-terminal -- bash -c "./u1 $(IP) $(PORT1) $(IP) $(PORT2); exec bash"
 	gnome-terminal -- bash -c "./u2 $(IP) $(PORT2) $(IP) $(PORT1); exec bash"
+ifeq ($(FOUR_USERS), 1)
 	gnome-terminal -- bash -c "./u1 $(IP) $(PORT3) $(IP) $(PORT4); exec bash"
-	gnome-terminal -- bash -c "./u2 $(IP) $(PORT4) $(IP) $(PORT3); exec bash"
+	gnome-terminal -- bash -c "./u2 $(IP) $(PORT4) $(IP) $(PORT3); exec bash"	
+endif
 
 clean:
 	-$(RM) $(OBJFILES) initk u1 u2 received*.txt

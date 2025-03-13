@@ -3,7 +3,12 @@ all:
 	gcc -o server taskqueueserver.c
 	gcc -o client workerclient.c
 
+run: all
+	gnome-terminal --geometry=80x24+0+0 -- bash -c "./server; exec bash"
+	sleep 1
+	gnome-terminal --geometry=50x13+900+0 -- bash -c "./client; exec bash"
+	sleep 1
+	gnome-terminal --geometry=50x13+900+500 -- bash -c "./client; exec bash"
+
 clean:
-	rm -f server client
-	rm -f /dev/shm/sem.qsem qshm
-	ipcs -m | grep 777 | awk '{print $2}' | xargs -I {} sh -c 'echo "Removing segment {}"; ipcrm -m {}'
+	rm -f server client qshm

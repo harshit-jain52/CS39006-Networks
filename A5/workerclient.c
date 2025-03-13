@@ -1,3 +1,11 @@
+/*
+===================================== 
+Assignment 5 Submission - workerclient.c
+Name: Harshit Jain
+Roll number: 22CS10030
+===================================== 
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -10,12 +18,6 @@
 
 #define SERVERPORT 8008
 #define MAXBUFLEN 100
-#define MAXTASKS 100
-#define MAXCLIENTS 5
-#define SEMNAME "/qsem"
-#define SHMPATH "qshm"
-#define SLEEPTIME 800000
-#define NO_DATA_LIMIT 10
 #define GET_TASK "GET_TASK"
 #define RESULT "RESULT\0\0"
 #define EXIT "exit\0\0\0\0"

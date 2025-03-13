@@ -1,3 +1,11 @@
+/*
+===================================== 
+Assignment 5 Submission - taskqueueserver.c
+Name: Harshit Jain
+Roll number: 22CS10030
+===================================== 
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -11,6 +19,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <sys/shm.h>
+#include <signal.h>
 
 #define PORT 8008
 #define MAXTASKS 100
@@ -18,7 +27,7 @@
 #define SEMNAME "/qsem"
 #define SHMPATH "qshm"
 #define SLEEPTIME 800000
-#define NO_DATA_LIMIT 10
+#define NO_DATA_LIMIT 15
 #define GET_TASK "GET_TASK"
 #define RESULT "RESULT\0\0"
 #define EXIT "exit\0\0\0\0"
@@ -27,6 +36,13 @@
 #define MAXBUFLEN 100
 #define PENDING_TASK "TASK PENDING"
 #define NOT_AVAILABLE "No tasks available"
+
+void sig_handler(int signo){
+    int shmid = shmget(ftok(SHMPATH, 'Q'), 0, 0);
+    shmctl(shmid, IPC_RMID, NULL);
+    sem_unlink(SEMNAME);
+    exit(0);
+}
 
 void cleanup(int sockfd, sem_t* sem, void* SM){
     close(sockfd);
@@ -123,21 +139,25 @@ int main(){
     TaskQueue* TQ;
     FILE* fp;
     
-    // Semaphore
+    // Signal Handling
+    signal(SIGINT, sig_handler);
+    signal(SIGSEGV, sig_handler);
+    
+    // Semaphore Initialization
     sem = sem_open(SEMNAME, O_CREAT | O_EXCL, 0666, 1);
     if(sem == SEM_FAILED){
         perror("server: sem_open");
         exit(1);
     }
 
-    // Shared Memory
+    // Shared Memory Initialization
     TQ = init_shm();
     fp = fopen("tasks.config", "r");
     if(fp == NULL){
         perror("server: fopen");
         exit(1);
     }
-    
+
     while(fgets(buf, MSG_BYTES, fp) != NULL){
         Task task;
         sscanf(buf, "%d %c %d", &task.num1, &task.op, &task.num2);

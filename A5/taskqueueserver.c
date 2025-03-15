@@ -20,6 +20,7 @@ Roll number: 22CS10030
 #include <stdbool.h>
 #include <sys/shm.h>
 #include <signal.h>
+#include <sys/wait.h>
 
 #define PORT 8008
 #define MAXTASKS 100
@@ -204,6 +205,11 @@ int main(){
     printf("server: listening on port %d\n", PORT);
 
     while(1){
+        pid_t wait_pid;
+        while((wait_pid = waitpid(-1, NULL, WNOHANG)) > 0){
+            printf("server: child %d killed\n", wait_pid);
+        }
+
         int newsockfd = accept(sockfd, (struct sockaddr *)&cliaddr, &addr_len);
         if(newsockfd < 0){
             if(errno == EWOULDBLOCK || errno == EAGAIN){

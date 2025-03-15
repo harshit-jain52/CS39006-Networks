@@ -97,6 +97,7 @@ int recv_nonblock(int sockfd, char* buf, int sz, struct sockaddr_in* cliaddr){
 }
 
 typedef struct Task{
+    int id;
     int num1;
     int num2;
     char op;
@@ -163,6 +164,7 @@ int main(){
         Task task;
         sscanf(buf, "%d %c %d", &task.num1, &task.op, &task.num2);
         sem_wait(sem);
+        task.id = TQ->rear+1;
         TQ->tasks[TQ->rear] = task;
         TQ->rear = (TQ->rear + 1) % MAXTASKS;
         sem_post(sem);
@@ -234,7 +236,8 @@ int main(){
             if(make_socket_nonblocking(newsockfd) < 0){
                 exit(1);
             }
-            bool task_pending = false;
+            Task pending_task;
+            pending_task.id = -1;
             while(1){
                 int sz = 0;
                 while(sz<HEADER_SIZE){
@@ -250,7 +253,7 @@ int main(){
                 int sendbytes = 0;
                 if(!memcmp(type, GET_TASK, HEADER_SIZE)){
                     printf("server: GET_TASK request from client at port %d\n", ntohs(cliaddr.sin_port));
-                    if(!task_pending){
+                    if(pending_task.id == -1){
                         sem_wait(sem);
                         if(TQ->front == TQ->rear){
                             sem_post(sem);
@@ -259,13 +262,12 @@ int main(){
                             sendbytes = send(newsockfd, buf, strlen(buf)+1, 0);
                         }
                         else{
-                            Task task = TQ->tasks[TQ->front];
+                            pending_task = TQ->tasks[TQ->front];
                             TQ->front = (TQ->front + 1) % MAXTASKS;
                             sem_post(sem);
-                            sprintf(buf, "Task: %d %c %d", task.num1, task.op, task.num2);
+                            sprintf(buf, "Task: %d %c %d", pending_task.num1, pending_task.op, pending_task.num2);
                             buf[strlen(buf)] = '\0';
                             sendbytes = send(newsockfd, buf, strlen(buf)+1, 0);
-                            task_pending = true;
                         }
                     }
                     else{
@@ -283,11 +285,11 @@ int main(){
                         sz += numbytes;
                     }
                     if(sz < MSG_BYTES) break;
-                    if(task_pending){
-                        task_pending = false;
+                    if(pending_task.id != -1){
                         int res;
                         memcpy(&res, buf + HEADER_SIZE, sizeof(int));
-                        printf("server: RESULT %d received from client at port %d\n", res, ntohs(cliaddr.sin_port));
+                        printf("server: RESULT %d received for task %d from client at port %d\n", res, pending_task.id, ntohs(cliaddr.sin_port));
+                        pending_task.id = -1;
                         sprintf(buf, "Result received");
                         buf[strlen(buf)] = '\0';
                         sendbytes = send(newsockfd, buf, strlen(buf)+1, 0);
@@ -311,6 +313,13 @@ int main(){
                     perror("server: send");
                     break;
                 }
+            }
+            if(pending_task.id != -1){
+                printf("server: Result of task %d lost to client at port %d. enqueueing again\n", pending_task.id, ntohs(cliaddr.sin_port));                
+                sem_wait(sem);
+                TQ->tasks[TQ->rear] = pending_task;
+                TQ->rear = (TQ->rear + 1) % MAXTASKS;
+                sem_post(sem);
             }
             close(newsockfd);
             exit(0);

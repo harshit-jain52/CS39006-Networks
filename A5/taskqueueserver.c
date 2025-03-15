@@ -74,7 +74,7 @@ int recv_nonblock(int sockfd, char* buf, int sz, struct sockaddr_in* cliaddr){
         numbytes = recv(sockfd, buf, sz, 0);
         if(numbytes < 0){
             if(errno == EWOULDBLOCK || errno == EAGAIN){
-                printf("server: no incoming data from client at port %d\n", ntohs(cliaddr->sin_port));
+                // printf("server: no incoming data from client at port %d\n", ntohs(cliaddr->sin_port));
                 nodata++;
                 if(nodata == NO_DATA_LIMIT){
                     printf("server: no-data limit reached for client at port %d. Closing connection.\n", ntohs(cliaddr->sin_port));
@@ -213,7 +213,7 @@ int main(){
         int newsockfd = accept(sockfd, (struct sockaddr *)&cliaddr, &addr_len);
         if(newsockfd < 0){
             if(errno == EWOULDBLOCK || errno == EAGAIN){
-                printf("server: no incoming connections\n");
+                // printf("server: no incoming connections\n");
                 usleep(SLEEPTIME*2);
                 continue;
             } else {

@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <stdbool.h>
 #include <time.h>
+#include <errno.h>
 
 #define MAXCLIENTS 5
 #define MAXBUFLEN 300
@@ -39,6 +40,7 @@ const ResponseCode SMPT_CODES[] = {
     {400, "ERR", "Invalid command syntax."},
     {401, "NOT FOUND", "Requested email does not exist."},
     {403, "FORBIDDEN", "Action not permitted."},
+    {404, "NOT FOUND", "Requested mailbox is empty or doesn't exist."},
     {500, "SERVER ERROR", "Internal server error."}
 };
 
@@ -73,7 +75,7 @@ int recv_until_null(int sockfd, char* buf){
         if(buf[sz] == '\0') break;
         sz++;
     }
-    printf("server: Received message: %s\n", buf);
+    // printf("server: Received message: %s\n", buf);
     return sz;
 }
 
@@ -86,7 +88,7 @@ int send_response(int sockfd, int code, const char* msg, const char* data){
     if(numbytes < 0){
         perror("server: send");
     }
-    printf("server: Sent response: %s", buf);
+    // printf("server: Sent response: %s", buf);
     return numbytes;
 }
 
@@ -196,7 +198,7 @@ int main(int argc, char* argv[]){
                         else{
                             if(check_domain(from, domain)){
                                 send_response(newsockfd, 200, NULL, NULL);
-                                printf("%s %s\n", MAILFROM, from);
+                                printf("%s%s\n", MAILFROM, from);
                             }
                             else{
                                 memset(from, 0, sizeof(from));
@@ -216,7 +218,7 @@ int main(int argc, char* argv[]){
                         }
                         else{
                             send_response(newsockfd, 200, NULL, NULL);
-                            printf("%s %s\n", RCPTTO, to);
+                            printf("%s%s\n", RCPTTO, to);
                         }
                     }
                     else send_response(newsockfd, 403, "Recipient already set", NULL);
@@ -261,6 +263,7 @@ int main(int argc, char* argv[]){
                             send_response(newsockfd, 400, NULL, NULL);
                         }
                         else if(check_domain(listmail, domain)){
+                            printf("%s%s\n", LIST, listmail);
                             sprintf(filename, "%s%s.txt", MAILBOX, listmail);
                             
                             char line[MAXDATALEN], email[MAXURLLEN], date[20];
@@ -270,7 +273,8 @@ int main(int argc, char* argv[]){
                             FILE* fp = fopen(filename, "r");
                             if(fp == NULL){                                
                                 perror("server: fopen");
-                                send_response(newsockfd, 500, NULL, NULL);
+                                if(errno == ENOENT) send_response(newsockfd, 404, NULL, NULL);
+                                else send_response(newsockfd, 500, NULL, NULL);
                             }
                             else{
                                 int count = 0;
@@ -313,11 +317,13 @@ int main(int argc, char* argv[]){
                             send_response(newsockfd, 400, NULL, NULL);
                         }
                         else if(check_domain(listmail, domain)){
+                            printf("%s%s %d\n", GETMAIL, listmail, id);
                             sprintf(filename, "%s%s.txt", MAILBOX, listmail);
                             FILE* fp = fopen(filename, "r");
                             if(fp == NULL){
                                 perror("server: fopen");
-                                send_response(newsockfd, 500, NULL, NULL);
+                                if(errno == ENOENT) send_response(newsockfd, 404, NULL, NULL);
+                                else send_response(newsockfd, 500, NULL, NULL);
                             }
                             else{
                                 char line[MAXDATALEN];

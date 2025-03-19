@@ -17,7 +17,7 @@ const char SEPERATOR = '.';
 // Commands
 
 #define DATA "DATA\n"
-#define GOODBYE "220 Goodbye"
+#define GOODBYE "200 Goodbye\n"
 
 int main(int argc, char* argv[]){
     if(argc != 3){

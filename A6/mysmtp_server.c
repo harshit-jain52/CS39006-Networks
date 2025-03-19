@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <stdbool.h>
+#include <time.h>
 
 #define MAXCLIENTS 5
 #define MAXBUFLEN 300
@@ -24,7 +25,7 @@ const char SEPERATOR = '.';
 #define DATA "DATA\n"
 #define LIST "LIST "
 #define GETMAIL "GET_MAIL "
-#define QUIT "QUIT "
+#define QUIT "QUIT"
 // Response codes
 
 typedef struct {
@@ -85,6 +86,7 @@ int send_response(int sockfd, int code, const char* msg, const char* data){
     if(numbytes < 0){
         perror("server: send");
     }
+    printf("server: Sent response: %s", buf);
     return numbytes;
 }
 
@@ -239,7 +241,9 @@ int main(int argc, char* argv[]){
                             send_response(newsockfd, 500, NULL, NULL);
                         }
                         else{
-                            fprintf(fp, "From: %s\nDate: %s\n%s\n%c\n", from, __DATE__, message, SEPERATOR);
+                            time_t t = time(NULL);
+                            struct tm tm = *localtime(&t);
+                            fprintf(fp, "From: %s\nDate: %02d-%02d-%d\n%s\n%c\n", from, tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900, message, SEPERATOR);
                             fclose(fp);
                             send_response(newsockfd, 200, "Message stored successfully", NULL);
                             memset(from, 0, sizeof(from));
@@ -288,6 +292,7 @@ int main(int argc, char* argv[]){
                                     }
                                 }
                                 fclose(fp);  
+                                buf[sz] = '\0';
                                 send_response(newsockfd, 200, NULL, buf);
                                 printf("Emails retrieved; list sent\n");
                             }
@@ -323,6 +328,7 @@ int main(int argc, char* argv[]){
                                     if(!strcmp(line, ".\n")){
                                         count++;
                                         if(count == id){
+                                            buf[sz] = '\0';
                                             send_response(newsockfd, 200, NULL, buf);
                                             printf("Email with ID %d sent\n", id);
                                             break;
@@ -351,7 +357,7 @@ int main(int argc, char* argv[]){
                 }
                 else if(!memcmp(buf, QUIT, strlen(QUIT))){
                     send_response(newsockfd, 200, "Goodbye", NULL);
-                    printf("Client disconnected\n");
+                    printf("Client disconnected: %s:%d\n", inet_ntoa(cliaddr.sin_addr), ntohs(cliaddr.sin_port));
                     break;
                 }
                 else{

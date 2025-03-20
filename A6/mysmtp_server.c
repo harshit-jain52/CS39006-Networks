@@ -1,3 +1,11 @@
+/*
+===================================== 
+Assignment 6 Submission - mysmtp_server.c
+Name: Harshit Jain
+Roll number: 22CS10030
+===================================== 
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -27,6 +35,7 @@ const char SEPERATOR = '.';
 #define LIST "LIST "
 #define GETMAIL "GET_MAIL "
 #define QUIT "QUIT"
+
 // Response codes
 
 typedef struct {
@@ -104,6 +113,10 @@ bool check_domain(const char* email, const char* domain){
     return (strcmp(edom, domain)==0);
 }
 
+bool validate_domain(const char* domain){
+    return (strchr(domain, '.') != NULL);
+}
+
 int main(int argc, char* argv[]){
     if(argc != 2){
         fprintf(stderr, "Usage: %s <port>\n", argv[0]);
@@ -178,7 +191,11 @@ int main(int argc, char* argv[]){
                 if(!memcmp(buf, HELO, strlen(HELO))){
                     if(!strlen(domain)){
                         if(sscanf(buf+strlen(HELO), "%s", domain) != 1){
-                            send_response(newsockfd, 400, NULL, NULL);
+                            send_response(newsockfd, 400, "Usage: HELO <domain>", NULL);
+                        }
+                        else if(!validate_domain(domain)){
+                            send_response(newsockfd, 400, "Invalid domain", NULL);
+                            memset(domain, 0, sizeof(domain));
                         }
                         else{
                             send_response(newsockfd, 200, NULL, NULL);
@@ -193,7 +210,7 @@ int main(int argc, char* argv[]){
                     }
                     else if(!strlen(from)){
                         if(sscanf(buf+strlen(MAILFROM), "%s", from) != 1){
-                            send_response(newsockfd, 400, NULL, NULL);
+                            send_response(newsockfd, 400, "Usage: MAIL FROM: <email>", NULL);
                         }
                         else{
                             if(check_domain(from, domain)){
@@ -214,7 +231,7 @@ int main(int argc, char* argv[]){
                     }
                     else if(!strlen(to)){
                         if(sscanf(buf+strlen(RCPTTO), "%s", to) != 1){
-                            send_response(newsockfd, 400, NULL, NULL);
+                            send_response(newsockfd, 400, "Usage: RCPT TO: <email>", NULL);
                         }
                         else{
                             send_response(newsockfd, 200, NULL, NULL);
@@ -260,7 +277,7 @@ int main(int argc, char* argv[]){
                     }
                     else{
                         if(sscanf(buf+strlen(LIST), "%s", listmail) != 1){
-                            send_response(newsockfd, 400, NULL, NULL);
+                            send_response(newsockfd, 400, "Usage: LIST <email>", NULL);
                         }
                         else if(check_domain(listmail, domain)){
                             printf("%s%s\n", LIST, listmail);
@@ -314,7 +331,7 @@ int main(int argc, char* argv[]){
                     else{
                         int id;
                         if(sscanf(buf+strlen(GETMAIL), "%s %d", listmail, &id) != 2){
-                            send_response(newsockfd, 400, NULL, NULL);
+                            send_response(newsockfd, 400, "Usage: GETMAIL <email> <id>", NULL);
                         }
                         else if(check_domain(listmail, domain)){
                             printf("%s%s %d\n", GETMAIL, listmail, id);

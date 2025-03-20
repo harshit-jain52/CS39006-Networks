@@ -1,3 +1,11 @@
+/*
+===================================== 
+Assignment 6 Submission - mysmtp_client.c
+Name: Harshit Jain
+Roll number: 22CS10030
+===================================== 
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -7,14 +15,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#define MAXCLIENTS 5
 #define MAXBUFLEN 300
 #define MAXURLLEN 100
 #define MAXDATALEN 200
 
 const char SEPERATOR = '.';
-
-// Commands
 
 #define DATA "DATA\n"
 #define GOODBYE "200 Goodbye\n"

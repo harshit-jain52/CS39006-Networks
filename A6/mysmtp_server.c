@@ -367,7 +367,7 @@ int main(int argc, char* argv[]){
                                     }
                                 }
                                 fclose(fp);
-                                if(count < id){
+                                if(count != id){
                                     send_response(newsockfd, 401, NULL, NULL);
                                 }
                             }

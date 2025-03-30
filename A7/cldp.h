@@ -21,6 +21,7 @@ Roll number: 22CS10030
 #include <sys/time.h>
 #include <time.h>
 #include <sys/sysinfo.h>
+#include <sys/types.h>
 
 #define IPPROTO_CLDP 169
 #define MAXBUFLEN 2048
@@ -61,7 +62,7 @@ unsigned short csum(unsigned short *ptr,int nbytes)
 	}
 	if(nbytes==1) {
 		oddbyte=0;
-		*((u_char*)&oddbyte)=*(u_char*)ptr;
+		*((__u_char*)&oddbyte)=*(__u_char*)ptr;
 		sum+=oddbyte;
 	}
 

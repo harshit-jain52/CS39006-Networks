@@ -36,3 +36,4 @@ make all
 1. Maximum size of sending and receiving buffer is `2048 bytes`.
 2. A server announces its presence every `10 seconds`.
 3. The client queries all servers in its list for metadat every `8 seconds`.
+4. The *options* field in the IP header is empty, so the header size is fixed - `20 bytes`.

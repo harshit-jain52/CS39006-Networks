@@ -10,12 +10,13 @@ Roll number: 22CS10030
 
 #define WAITTIME 8
 #define SLEEPTIME 800000
-
+#define INACTIVETIME 30
 
 // Linked List of servers
 typedef struct ServerLL{
     struct in_addr addr;
     struct ServerLL* next;
+    time_t lastHello;
 } ServerNode;
 
 // Linked List of requests
@@ -34,6 +35,7 @@ ServerNode* makeNode(struct in_addr addr){
     ServerNode* newNode = (ServerNode*)malloc(sizeof(ServerNode));
     newNode->addr = addr;
     newNode->next = NULL;
+    newNode->lastHello = time(NULL);
     return newNode;
 }
 
@@ -53,6 +55,7 @@ void addNode(struct in_addr addr){
         ServerNode* temp = server_head;
         while(temp != NULL){
             if(temp->addr.s_addr == addr.s_addr){
+                temp->lastHello = time(NULL);
                 free(newNode);
                 return;
             }
@@ -107,12 +110,65 @@ void deleteIdNode(int id){
     }
 }
 
+void removeInactiveIDs(struct in_addr addr){
+    IdNode* temp = idll_head;
+    IdNode* prev = NULL;
+    IdNode* next = NULL;
+    
+    while(temp != NULL){
+        next = temp->next;        
+        if(temp->server->addr.s_addr == addr.s_addr){
+            if(prev == NULL){
+                idll_head = temp->next;
+            } else {
+                prev->next = temp->next;
+            }
+            free(temp);
+            temp = next;
+        } else {
+            prev = temp;
+            temp = next;
+        }
+    }
+}
+
+void removeInactiveServers(){
+    ServerNode* temp = server_head;
+    time_t now = time(NULL);
+    pthread_mutex_lock(&lmtx);
+    while(temp != NULL){
+        if(now - temp->lastHello > INACTIVETIME){
+            printf("Server %s inactive, removing\n", inet_ntoa(temp->addr));
+            ServerNode* toDelete = temp;
+            removeInactiveIDs(temp->addr);
+            if(temp == server_head){
+                server_head = server_head->next;
+                temp = server_head;
+            } else {
+                ServerNode* prev = server_head;
+                while(prev->next != temp){
+                    prev = prev->next;
+                }
+
+                prev->next = temp->next;
+                temp = prev->next;
+            }
+            free(toDelete);
+        } else {
+            temp = temp->next;
+        }
+    }
+    pthread_mutex_unlock(&lmtx);
+}
+
 void *Query(void *targ){
     int sock = *(int *)targ;
     char buff[MAXBUFLEN];
 
     for(;;){
         sleep(WAITTIME);
+        removeInactiveServers();      
+  
         ServerNode* temp = server_head;
         while(temp != NULL){
             struct sockaddr_in addr;
@@ -142,7 +198,6 @@ void *Query(void *targ){
             int numbytes = sendto(sock, buff, ip->tot_len, 0, (struct sockaddr*)&addr, sizeof(addr));
             if(numbytes < 0){
                 perror("sendto");
-                continue;
             }
             temp = temp->next;
         }

@@ -6,37 +6,11 @@ Roll number: 22CS10030
 ===================================== 
 */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <netinet/ip.h>
-#include <unistd.h>
-#include <pthread.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <arpa/inet.h>
-#include <sys/time.h>
+#include "cldp.h"
 
-#define IPPROTO_CLDP 253
 #define WAITTIME 8
 #define SLEEPTIME 800000
-#define MAXBUFLEN 2048
-#define HELLO 0x01
-#define QUERY 0x02
-#define RESPONSE 0x03
 
-struct cldphdr{
-    unsigned char type;
-    unsigned int payload_len;
-    unsigned int trans_id;
-    char reserved[8];
-};
-
-struct Response{
-    char hostname[256];
-    char system_time[64];
-};
 
 // Linked List of servers
 typedef struct ServerLL{
@@ -87,7 +61,7 @@ void addNode(struct in_addr addr){
         newNode->next = server_head;
         server_head = newNode;
     }
-    printf("Added server %s\n", inet_ntoa(addr));
+    // printf("Added server %s\n", inet_ntoa(addr));
 }
 
 IdNode* addIdNode(ServerNode* server){
@@ -145,24 +119,25 @@ void *Query(void *targ){
             memset(&addr, 0, sizeof(addr));
             addr.sin_family = AF_INET;
             addr.sin_addr = temp->addr;
+
             pthread_mutex_lock(&lmtx);
             IdNode* idNode = addIdNode(temp);
             pthread_mutex_unlock(&lmtx);
-            // Fill the CLDP header
+
+            memset(buff, 0, sizeof(buff));
+
             struct cldphdr* clpd = (struct cldphdr*)(buff + sizeof(struct iphdr));
             clpd->type = QUERY;
             clpd->payload_len = 0;
             clpd->trans_id = idNode->trans_id;
             memset(clpd->reserved, 0, sizeof(clpd->reserved));
-            // Fill the IP header
+
             struct iphdr* ip = (struct iphdr*)(buff);
-            ip->version = 4;
-            ip->ihl = 5;
+            fill_defaults(ip);
             ip->tot_len = sizeof(struct cldphdr) + sizeof(struct iphdr);
-            ip->ttl = 255;
-            ip->protocol = IPPROTO_CLDP;
             ip->saddr = htonl(INADDR_ANY);
             ip->daddr = temp->addr.s_addr;
+            ip->check = csum((unsigned short*)buff, ip->tot_len);
 
             int numbytes = sendto(sock, buff, ip->tot_len, 0, (struct sockaddr*)&addr, sizeof(addr));
             if(numbytes < 0){
@@ -241,7 +216,10 @@ int main(){
                 printf("Received RESPONSE from %s, transaction id: %d\n", inet_ntoa(*(struct in_addr*)&ip->saddr), clpd->trans_id);
                 struct Response* resp = (struct Response*)(buf + ip->ihl*4 + sizeof(struct cldphdr));
                 printf("Hostname: %s\t", resp->hostname);
-                printf("System Time: %s\n", resp->system_time);
+                printf("System Time: %s\t", resp->system_time);
+                printf("Uptime: %ld\t", resp->sys_info.uptime);
+                printf("Free RAM/Total RAM: %ld/%ld\t", resp->sys_info.freeram, resp->sys_info.totalram);
+                printf("Load Averages: %ld %ld %ld\n", resp->sys_info.loads[0], resp->sys_info.loads[1], resp->sys_info.loads[2]);
                 pthread_mutex_lock(&lmtx);
                 deleteIdNode(idNode->trans_id);
                 pthread_mutex_unlock(&lmtx);

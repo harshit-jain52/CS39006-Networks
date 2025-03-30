@@ -6,37 +6,10 @@ Roll number: 22CS10030
 ===================================== 
 */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <netinet/ip.h>
-#include <unistd.h>
-#include <pthread.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <arpa/inet.h>
-#include <ifaddrs.h>
-#include <net/if.h>
-#include <sys/time.h>
-#include <time.h>
+#include "cldp.h"
 
-#define IPPROTO_CLDP 253
 #define WAITTIME 10
 #define SLEEPTIME 800000
-#define MAXBUFLEN 2048
-
-struct cldphdr{
-    unsigned char type;
-    unsigned int payload_len;
-    unsigned int trans_id;
-    char reserved[8];
-};
-
-struct Response{
-    char hostname[256];
-    char system_time[64];
-};
 
 in_addr_t get_local_ip() {
     struct ifaddrs *ifaddr, *ifa;
@@ -65,13 +38,6 @@ in_addr_t get_local_ip() {
     return ip;
 }
 
-void fill_defaults(struct iphdr* ip){
-    ip->version = 4;
-    ip->ihl = 5;
-    ip->ttl = 255;
-    ip->protocol = IPPROTO_CLDP;
-}
-
 void *Broadcast(void* targ){
     int sock = *(int *)targ;
     struct sockaddr_in broadcast_addr;
@@ -83,20 +49,21 @@ void *Broadcast(void* targ){
 
     for(;;){
         memset(buff, 0, sizeof(buff));
-        // Fill the CLDP header
+
         struct cldphdr* clpd = (struct cldphdr*)(buff + sizeof(struct iphdr));
         clpd->type = 0x01; // HELLO
         clpd->payload_len = 0;
         clpd->trans_id = 0;
         memset(clpd->reserved, 0, sizeof(clpd->reserved));
-        // Fill the IP header
+
         struct iphdr* ip = (struct iphdr*)(buff);
         fill_defaults(ip);
         ip->tot_len = sizeof(struct cldphdr) + sizeof(struct iphdr);
         ip->saddr = local_ip;
         ip->daddr = htonl(INADDR_BROADCAST);
+        ip->check = csum((unsigned short*)buff, ip->tot_len);
 
-        int numbytes = sendto(sock, buff, sizeof(struct cldphdr) + sizeof(struct iphdr), 0, (struct sockaddr*)&broadcast_addr, sizeof(broadcast_addr));
+        int numbytes = sendto(sock, buff, ip->tot_len, 0, (struct sockaddr*)&broadcast_addr, sizeof(broadcast_addr));
         if(numbytes < 0){
             perror("sendto");
             continue;
@@ -162,11 +129,11 @@ int main(){
         }
 
         struct cldphdr* clpd = (struct cldphdr*)(buf + sizeof(struct iphdr));
-        if(clpd->type==0x01){
+        if(clpd->type == HELLO){
             // IGNORE
             continue;
         }
-        else if(clpd->type == 0x02){
+        else if(clpd->type == QUERY){
             int trans_id = clpd->trans_id;
             printf("Received QUERY from %s, transaction id: %d\n", inet_ntoa(*(struct in_addr*)&cli_addr.sin_addr), trans_id);
             memset(buf, 0, sizeof(buf));
@@ -179,6 +146,7 @@ int main(){
             gettimeofday(&tv, NULL);
             struct tm* tm_info = localtime(&tv.tv_sec);
             strftime(response->system_time, sizeof(response->system_time), "%Y-%m-%d %H:%M:%S", tm_info);
+            sysinfo(&response->sys_info);
             memcpy(payload, response, sizeof(struct Response));
             free(response);
 
@@ -193,14 +161,12 @@ int main(){
             ip->tot_len = sizeof(struct cldphdr) + sizeof(struct iphdr) + sizeof(struct Response);
             ip->saddr = htonl(INADDR_ANY);
             ip->daddr = cli_addr.sin_addr.s_addr;
-            int numbytes = sendto(sock, buf, sizeof(struct cldphdr) + sizeof(struct iphdr) + sizeof(struct Response), 0, (struct sockaddr*)&cli_addr, addr_len);
+            ip->check = csum((unsigned short*)buf, ip->tot_len);
+            int numbytes = sendto(sock, buf, ip->tot_len, 0, (struct sockaddr*)&cli_addr, addr_len);
             if(numbytes < 0){
                 perror("sendto");
                 continue;
             }
-        }
-        else{
-            // printf("Received unknown type %d from %s\n", clpd->type, inet_ntoa(*(struct in_addr*)&cli_addr.sin_addr));
         }
     }
 }
